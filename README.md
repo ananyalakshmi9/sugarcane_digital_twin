@@ -4,7 +4,7 @@ An advanced agricultural decision-support platform designed to monitor sugarcane
 
 ---
 
-## 🌟 Key Platform Features
+## Key Platform Features
 
 ### 1. Database Separation & Curve Protection
 *   **Ideal Reference Database** (`data/raw/Satellite_twin_data.xlsx`): Strictly contains data from high-yielding reference farms used to generate optimal growth curve baselines.
@@ -41,7 +41,7 @@ An advanced agricultural decision-support platform designed to monitor sugarcane
 
 ---
 
-## 🚀 How to Run
+## How to Run
 
 ### Option A: Web User Interface (Flask App)
 
