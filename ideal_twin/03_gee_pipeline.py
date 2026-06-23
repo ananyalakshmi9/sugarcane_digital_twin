@@ -1,9 +1,12 @@
+import os
 import ee
 import pandas as pd
 import numpy as np
+from dotenv import load_dotenv
 
 def run_gee_pipeline(farm_data_path, coord_path, output_path):
-    ee.Initialize(project='harvest-maximizer')
+    load_dotenv()
+    ee.Initialize(project=os.getenv("GEE_PROJECT_ID", "harvest-maximizer"))
     
     # Load farms
     farms_df = pd.read_csv(farm_data_path)
@@ -20,7 +23,7 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
         if len(pts) >= 3:
             polygons[int(farm_id)] = ee.Geometry.Polygon([pts])
             
-    records = []
+    all_records = []
     
     # S2 indices function
     def add_indices(image):
@@ -46,13 +49,22 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
         p_date = str(row['planting_date']).split(' ')[0]
         h_date = str(row['harvest_date']).split(' ')[0]
         
+        # If harvest date is missing (NaT), fetch data till 2025-12-31
+        if h_date == 'NaT':
+            h_date = '2025-12-31'
+            
+        # Also ensure we fetch at least till 2025-12-31 if the user explicitly requested it for all ongoing seasons
+        if '2024' in season or '2025' in season:
+            h_date = max(h_date, '2025-12-31') if h_date != 'NaT' else '2025-12-31'
+        
         if farm_id not in polygons:
             print(f"Skipping farm {farm_id}: No coordinates found.")
             continue
             
         roi = polygons[farm_id]
+        farm_records = []
         
-        # Sentinel-2
+        # 1. Sentinel-2
         s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
             .filterBounds(roi) \
             .filterDate(p_date, h_date) \
@@ -62,11 +74,7 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
         def get_s2_stats(image):
             date = image.date().format('YYYY-MM-dd')
             stats = image.select(['NDVI', 'NDRE', 'NDWI', 'EVI', 'MSAVI']).reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=roi,
-                scale=10,
-                maxPixels=1e9
-            )
+                reducer=ee.Reducer.mean(), geometry=roi, scale=10, maxPixels=1e9)
             return ee.Feature(None, stats).set('date', date)
             
         try:
@@ -75,26 +83,41 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
                 props = feat['properties']
                 if props.get('NDVI') is not None:
                     dap = (pd.to_datetime(props['date']) - pd.to_datetime(p_date)).days
-                    records.append({
-                        'farm_id': farm_id,
-                        'season': season,
-                        'observation_date': props['date'],
-                        'DAP': dap,
-                        'NDVI': props.get('NDVI'),
-                        'NDRE': props.get('NDRE'),
-                        'NDWI': props.get('NDWI'),
-                        'EVI': props.get('EVI'),
-                        'MSAVI': props.get('MSAVI'),
-                        'VH_VV': np.nan,
-                        'temperature_2m': np.nan,
-                        'total_precipitation_sum': np.nan,
-                        'relative_humidity': np.nan,
-                        'wind_speed_10m': np.nan
-                    })
+                    farm_records.append({'farm_id': farm_id, 'season': season, 'observation_date': props['date'], 'DAP': dap,
+                                         'NDVI': props.get('NDVI'), 'NDRE': props.get('NDRE'), 'NDWI': props.get('NDWI'),
+                                         'EVI': props.get('EVI'), 'MSAVI': props.get('MSAVI')})
         except Exception as e:
             print(f"S2 failed for {farm_id}: {e}")
 
-        # ERA5-Land Weather
+        # 2. Sentinel-1
+        s1 = ee.ImageCollection('COPERNICUS/S1_GRD') \
+            .filterBounds(roi) \
+            .filterDate(p_date, h_date) \
+            .filter(ee.Filter.eq('instrumentMode', 'IW')) \
+            .filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING')) \
+            .select(['VH', 'VV'])
+            
+        def get_s1_stats(image):
+            # Convert dB to linear: linear = 10^(dB/10)
+            vh_lin = ee.Image(10.0).pow(image.select('VH').divide(10.0))
+            vv_lin = ee.Image(10.0).pow(image.select('VV').divide(10.0))
+            vh_vv = vh_lin.divide(vv_lin).rename('VH_VV')
+            
+            date = image.date().format('YYYY-MM-dd')
+            stats = vh_vv.reduceRegion(reducer=ee.Reducer.mean(), geometry=roi, scale=10, maxPixels=1e9)
+            return ee.Feature(None, stats).set('date', date)
+            
+        try:
+            s1_features = ee.FeatureCollection(s1.map(get_s1_stats)).getInfo()['features']
+            for feat in s1_features:
+                props = feat['properties']
+                if props.get('VH_VV') is not None:
+                    dap = (pd.to_datetime(props['date']) - pd.to_datetime(p_date)).days
+                    farm_records.append({'farm_id': farm_id, 'season': season, 'observation_date': props['date'], 'DAP': dap, 'VH_VV': props.get('VH_VV')})
+        except Exception as e:
+            print(f"S1 failed for {farm_id}: {e}")
+
+        # 3. ERA5-Land Weather
         era5 = ee.ImageCollection('ECMWF/ERA5_LAND/DAILY_AGGR') \
             .filterBounds(roi) \
             .filterDate(p_date, h_date) \
@@ -102,12 +125,7 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
             
         def get_weather_stats(image):
             date = image.date().format('YYYY-MM-dd')
-            stats = image.reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=roi,
-                scale=11132, # ERA5-Land scale
-                maxPixels=1e9
-            )
+            stats = image.reduceRegion(reducer=ee.Reducer.first(), geometry=roi.centroid(), scale=11132, maxPixels=1e9)
             return ee.Feature(None, stats).set('date', date)
             
         try:
@@ -116,37 +134,36 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
                 props = feat['properties']
                 if props.get('temperature_2m') is not None:
                     dap = (pd.to_datetime(props['date']) - pd.to_datetime(p_date)).days
-                    
-                    # Compute derived variables
                     t_c = props['temperature_2m'] - 273.15
                     td_c = props['dewpoint_temperature_2m'] - 273.15
                     rh = 100 * np.exp((17.625 * td_c) / (243.04 + td_c)) / np.exp((17.625 * t_c) / (243.04 + t_c))
                     wind_speed = np.sqrt(props['u_component_of_wind_10m']**2 + props['v_component_of_wind_10m']**2)
                     precip_mm = props['total_precipitation_sum'] * 1000
                     
-                    records.append({
-                        'farm_id': farm_id,
-                        'season': season,
-                        'observation_date': props['date'],
-                        'DAP': dap,
-                        'NDVI': np.nan,
-                        'NDRE': np.nan,
-                        'NDWI': np.nan,
-                        'EVI': np.nan,
-                        'MSAVI': np.nan,
-                        'VH_VV': np.nan,
-                        'temperature_2m': t_c,
-                        'total_precipitation_sum': precip_mm,
-                        'relative_humidity': rh,
-                        'wind_speed_10m': wind_speed
-                    })
+                    farm_records.append({'farm_id': farm_id, 'season': season, 'observation_date': props['date'], 'DAP': dap,
+                                         'temperature_2m': t_c, 'total_precipitation_sum': precip_mm,
+                                         'relative_humidity': rh, 'wind_speed_10m': wind_speed})
         except Exception as e:
             print(f"Weather failed for {farm_id}: {e}")
 
-    gee_df = pd.DataFrame(records)
+        all_records.extend(farm_records)
+
+    # Convert all records to DataFrame and merge rows with the same date/farm
+    df = pd.DataFrame(all_records)
     
-    gee_df.to_csv(output_path, index=False)
-    print(f"Saved {len(gee_df)} actual GEE observations to {output_path}")
+    # Ensure all columns exist
+    expected_cols = ['farm_id', 'season', 'observation_date', 'DAP', 'NDVI', 'NDRE', 'NDWI', 'EVI', 'MSAVI', 'VH_VV', 'temperature_2m', 'total_precipitation_sum', 'relative_humidity', 'wind_speed_10m']
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = np.nan
+            
+    # Group by farm_id, season, observation_date, DAP to collapse the rows
+    # taking the first non-null value per column
+    if not df.empty:
+        df = df.groupby(['farm_id', 'season', 'observation_date', 'DAP'], as_index=False).first()
+    
+    df.to_csv(output_path, index=False)
+    print(f"Saved {len(df)} collapsed actual GEE observations to {output_path}")
 
 if __name__ == "__main__":
     run_gee_pipeline('data/cleaned/farm_data_weighted.csv', 'data/raw/coordinates.xlsx', 'data/gee_outputs/indices_by_dap.csv')

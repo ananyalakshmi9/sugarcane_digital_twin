@@ -3,3 +3,6 @@
 *.json
 .DS_Store
 data/.DS_Store
+.env
+*.log
+__pycache__/

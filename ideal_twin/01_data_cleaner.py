@@ -1,19 +1,15 @@
 import pandas as pd
 import numpy as np
+import os
+import re
 
-def clean_data(input_path, output_path):
+def clean_single_file(input_path):
     print(f"Reading raw data from {input_path}")
     df = pd.read_excel(input_path)
     
-    # Provide a note
-    print("NOTE: Pipeline is dynamic. It will process all valid rows provided in the Excel file.")
-    
     # We will rename columns using their index or substring matching to be robust against long Hindi names
-    cols = df.columns.tolist()
-    
     clean_df = pd.DataFrame()
     
-    # The prompt mentions seasons: 2022-23, 2023-24, 2024-25. Let's use column 2
     clean_df['farm_id'] = df.iloc[:, 1]
     clean_df['season'] = df.iloc[:, 2]
     clean_df['farmer_name'] = df.iloc[:, 3]
@@ -28,7 +24,6 @@ def clean_data(input_path, output_path):
         return v
         
     clean_df['variety'] = clean_df['variety'].apply(normalize_variety)
-    
     clean_df['crop_type_clean'] = df.iloc[:, 6].apply(lambda x: 'ratoon' if isinstance(x, str) and 'ratoon' in x.lower() else 'newly_planted')
     
     # Dates
@@ -51,8 +46,6 @@ def clean_data(input_path, output_path):
     # Brix - Column 35
     clean_df['brix'] = pd.to_numeric(df.iloc[:, 35], errors='coerce')
     
-    import re
-
     def extract_total_bags(text):
         if pd.isnull(text):
             return 0
@@ -71,7 +64,6 @@ def clean_data(input_path, output_path):
     clean_df['p_kg_total'] = clean_df['ssp_bags_total'] * 8.0
     clean_df['k_kg_total'] = clean_df['mop_bags_total'] * 30.0
     
-    # Avoid division by zero
     clean_df['n_kg_per_acre'] = np.where(clean_df['area_acres'] > 0, clean_df['n_kg_total'] / clean_df['area_acres'], 0)
     clean_df['p_kg_per_acre'] = np.where(clean_df['area_acres'] > 0, clean_df['p_kg_total'] / clean_df['area_acres'], 0)
     clean_df['k_kg_per_acre'] = np.where(clean_df['area_acres'] > 0, clean_df['k_kg_total'] / clean_df['area_acres'], 0)
@@ -81,7 +73,6 @@ def clean_data(input_path, output_path):
     clean_df['farm_id'] = pd.to_numeric(clean_df['farm_id'], errors='coerce').fillna(0).astype(int)
     clean_df = clean_df[clean_df['farm_id'] > 0]
     
-    # The prompt mentions seasons: 2022-23, 2023-24, 2024-25. Let's infer season based on planting_date year.
     def infer_season(date):
         if pd.isnull(date): return '2023-24'
         year = date.year
@@ -91,9 +82,30 @@ def clean_data(input_path, output_path):
             return f"{year-1}-{str(year)[-2:]}"
             
     clean_df['season'] = clean_df['planting_date'].apply(infer_season)
+    return clean_df
 
-    clean_df.to_csv(output_path, index=False)
-    print(f"Saved {len(clean_df)} rows to {output_path}")
+def clean_data():
+    ideal_path = 'data/raw/Satellite_twin_data.xlsx'
+    regular_path = 'data/raw/Regular_farmers_data.xlsx'
+    output_path = 'data/cleaned/farm_data_clean.csv'
+    
+    df_ideal = clean_single_file(ideal_path)
+    df_ideal['is_ideal'] = 1
+    
+    if os.path.exists(regular_path):
+        try:
+            df_regular = clean_single_file(regular_path)
+            df_regular['is_ideal'] = 0
+            df_all = pd.concat([df_ideal, df_regular], ignore_index=True)
+            print(f"Merged {len(df_regular)} regular farm records.")
+        except Exception as e:
+            print(f"Error cleaning regular farmers Excel: {e}")
+            df_all = df_ideal
+    else:
+        df_all = df_ideal
+        
+    df_all.to_csv(output_path, index=False)
+    print(f"Saved {len(df_all)} clean rows to {output_path}")
 
 if __name__ == "__main__":
-    clean_data('data/raw/Satellite_twin_data.xlsx', 'data/cleaned/farm_data_clean.csv')
+    clean_data()

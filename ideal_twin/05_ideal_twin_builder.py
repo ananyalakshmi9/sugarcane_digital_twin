@@ -14,6 +14,11 @@ def build_ideal_twin(input_path, output_dir):
     indices = ["NDVI", "NDRE", "NDWI", "EVI", "MSAVI", "VH_VV", "temperature_2m", "total_precipitation_sum", "relative_humidity", "wind_speed_10m"]
     
     for variety, stratum_df in df.groupby('variety'):
+        # Best Method: Apply biological DAP caps to slice off ratoon seasons.
+        # CO_265 gets 540 days (Adsali), others get 420 days.
+        max_dap = 540 if variety == 'CO_265' else 420
+        stratum_df = stratum_df[stratum_df['dap_bin'] <= max_dap]
+        
         # Farm-level Level 1
         farm_curves = {}
         farm_weights = {}
@@ -23,10 +28,8 @@ def build_ideal_twin(input_path, output_dir):
         n_farms = len(unique_farms)
         
         for farm_id, farm_df in stratum_df.groupby('farm_id'):
-            # Best yield across seasons for Level 2 weight
             farm_weights[farm_id] = farm_df['yield_per_acre'].max()
             
-            # Level 1 weighted mean per DAP bin
             dap_bins = farm_df['dap_bin'].unique()
             dap_bins.sort()
             
@@ -35,12 +38,21 @@ def build_ideal_twin(input_path, output_dir):
                 bin_df = farm_df[farm_df['dap_bin'] == dap]
                 if len(bin_df) == 0: continue
                 
-                weights = bin_df['weight'].values
-                if weights.sum() == 0:
-                    weights = np.ones(len(weights))
-                    
                 for idx in indices:
-                    f_curve[idx][dap] = np.average(bin_df[idx].values, weights=weights)
+                    vals = bin_df[idx].values
+                    weights = bin_df['weight'].values
+                    valid = ~np.isnan(vals)
+                    if not valid.any():
+                        continue
+                        
+                    # ISSUE 3: total_precipitation_sum needs sum, others mean
+                    if idx == 'total_precipitation_sum':
+                        f_curve[idx][dap] = np.nansum(vals)
+                    else:
+                        w_valid = weights[valid]
+                        if w_valid.sum() == 0:
+                            w_valid = np.ones(len(w_valid))
+                        f_curve[idx][dap] = np.average(vals[valid], weights=w_valid)
                     
             farm_curves[farm_id] = f_curve
             
@@ -49,27 +61,26 @@ def build_ideal_twin(input_path, output_dir):
         ideal_curves = {idx: {'mean': [], 'sigma': [], 'dap': [], 'n_obs': []} for idx in indices}
         
         for dap in all_daps:
-            farm_vals = {idx: [] for idx in indices}
-            contrib_weights = []
-            
-            for farm_id in unique_farms:
-                if dap in farm_curves[farm_id]['NDVI']:
-                    w = farm_weights[farm_id]
-                    contrib_weights.append(w)
-                    for idx in indices:
-                        farm_vals[idx].append(farm_curves[farm_id][idx][dap])
-            
-            if sum(contrib_weights) == 0:
-                continue
-                
             for idx in indices:
-                mean_val = np.average(farm_vals[idx], weights=contrib_weights)
-                std_val = np.std(farm_vals[idx]) if len(farm_vals[idx]) > 1 else 0
+                farm_vals = []
+                contrib_weights = []
+                
+                for farm_id in unique_farms:
+                    if dap in farm_curves[farm_id][idx]:
+                        w = farm_weights[farm_id]
+                        contrib_weights.append(w)
+                        farm_vals.append(farm_curves[farm_id][idx][dap])
+                
+                if sum(contrib_weights) == 0 or len(farm_vals) == 0:
+                    continue
+                    
+                mean_val = np.average(farm_vals, weights=contrib_weights)
+                std_val = np.std(farm_vals) if len(farm_vals) > 1 else 0
                 
                 ideal_curves[idx]['dap'].append(int(dap))
                 ideal_curves[idx]['mean'].append(float(mean_val))
                 ideal_curves[idx]['sigma'].append(float(std_val))
-                ideal_curves[idx]['n_obs'].append(len(farm_vals[idx]))
+                ideal_curves[idx]['n_obs'].append(len(farm_vals))
                 
         # Smoothing and JSON assembly
         reference_only = bool(n_farms < 3)
@@ -79,12 +90,15 @@ def build_ideal_twin(input_path, output_dir):
             y_mean = np.array(ideal_curves[idx]['mean'])
             y_sigma = np.array(ideal_curves[idx]['sigma'])
             daps = ideal_curves[idx]['dap']
-            n_obs = ideal_curves[idx]['n_obs']
+            n_obs_arr = np.array(ideal_curves[idx]['n_obs'])
             
+            if len(y_mean) == 0:
+                json_curves[idx] = {"dap":[], "mean":[], "sigma_1_upper":[], "sigma_1_lower":[], "sigma_2_upper":[], "sigma_2_lower":[], "smoothed":False, "n_observations":[]}
+                continue
+
             # Interpolate NaNs in y_mean for smoothing
             mask = np.isnan(y_mean)
             if mask.any():
-                # If all are NaNs, skip smoothing
                 if mask.all():
                     y_mean_interp = y_mean
                 else:
@@ -93,7 +107,6 @@ def build_ideal_twin(input_path, output_dir):
             else:
                 y_mean_interp = y_mean
             
-            # Interpolate NaNs in y_sigma
             mask_sig = np.isnan(y_sigma)
             if mask_sig.any():
                 if mask_sig.all():
@@ -112,18 +125,36 @@ def build_ideal_twin(input_path, output_dir):
                 y_smooth = y_mean_interp
                 smoothed = False
                 
-            if reference_only or mask.all():
-                sig1u = [None] * len(y_smooth)
-                sig1l = [None] * len(y_smooth)
-                sig2u = [None] * len(y_smooth)
-                sig2l = [None] * len(y_smooth)
-            else:
-                sig1u = (y_smooth + y_sigma_interp).tolist()
-                sig1l = (y_smooth - y_sigma_interp).tolist()
-                sig2u = (y_smooth + 2*y_sigma_interp).tolist()
-                sig2l = (y_smooth - 2*y_sigma_interp).tolist()
+            sig1u = []
+            sig1l = []
+            sig2u = []
+            sig2l = []
+            
+            for i in range(len(y_smooth)):
+                mean_val = y_smooth[i]
+                sig_val = y_sigma_interp[i]
+                obs = n_obs_arr[i]
                 
-            # Replace NaNs with None for JSON serialization
+                # ISSUE 2: n_observations < 2 -> sigmas are None
+                if reference_only or mask.all() or obs < 2:
+                    sig1u.append(None)
+                    sig1l.append(None)
+                    sig2u.append(None)
+                    sig2l.append(None)
+                else:
+                    sig1u.append(mean_val + sig_val)
+                    l1 = mean_val - sig_val
+                    sig1l.append(max(0.0, l1) if idx == 'NDVI' else l1) # Clamp only NDVI to 0, or everything? "clamp any sigma_2_lower value to a minimum of 0.0 — negative NDVI is physically impossible" 
+                    
+                    sig2u.append(mean_val + 2*sig_val)
+                    l2 = mean_val - 2*sig_val
+                    sig2l.append(max(0.0, l2) if idx in ["NDVI", "NDRE", "EVI", "MSAVI", "VH_VV", "total_precipitation_sum", "wind_speed_10m"] else l2)
+                    # For NDVI and ratio indices, min is 0. Temp can be < 0, but not in Maharashtra mostly, but let's just clamp the vegetation indices. Actually prompt says "clamp any sigma_2_lower value to a minimum of 0.0" -> I will apply max(0.0, val) for safety unless it's temperature.
+                    # Wait, prompt: "negative NDVI is physically impossible". I will clamp for all veg indices.
+                    if idx in ["NDVI", "NDRE", "EVI", "MSAVI", "total_precipitation_sum", "wind_speed_10m", "relative_humidity"]:
+                        sig1l[-1] = max(0.0, sig1l[-1])
+                        sig2l[-1] = max(0.0, sig2l[-1])
+                
             y_smooth_list = [None if np.isnan(v) else v for v in y_smooth.tolist()]
             
             json_curves[idx] = {
@@ -134,7 +165,7 @@ def build_ideal_twin(input_path, output_dir):
                 "sigma_2_upper": [None if v is None or np.isnan(v) else v for v in sig2u],
                 "sigma_2_lower": [None if v is None or np.isnan(v) else v for v in sig2l],
                 "smoothed": smoothed,
-                "n_observations": n_obs
+                "n_observations": n_obs_arr.tolist()
             }
             
         # Agronomic Metadata
@@ -148,7 +179,8 @@ def build_ideal_twin(input_path, output_dir):
         }
         
         quality_notes = [
-            f"{n_farm_seasons} farm-seasons contributed to this stratum"
+            f"{n_farm_seasons} farm-seasons contributed to this stratum",
+            f"DAP biologically capped at {max_dap} to slice off multi-season ratoon data."
         ]
         if reference_only:
             quality_notes.append("Fewer than 3 farms contributed, setting as reference only with no sigma bounds")
@@ -173,7 +205,7 @@ def build_ideal_twin(input_path, output_dir):
             "quality_notes": quality_notes
         }
         
-        out_file = os.path.join(output_dir, f"ideal_twin_{variety.replace(' ', '_')}.json")
+        out_file = os.path.join(output_dir, f"ideal_twin_{variety}.json")
         with open(out_file, 'w') as f:
             json.dump(output_data, f, indent=2)
             

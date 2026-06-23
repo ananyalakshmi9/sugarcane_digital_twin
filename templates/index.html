@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sugarcane Digital Twin Administration Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: #FFFFFF;
+            color: #1F2937;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background-color: #FFFFFF;
+            border-bottom: 2px solid #95B227;
+            padding: 15px 30px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-logo {
+            font-size: 26px;
+            font-weight: 800;
+            color: #95B227;
+            letter-spacing: -0.5px;
+        }
+
+        .brand-tag {
+            font-size: 11px;
+            font-weight: 700;
+            color: #95B227;
+            background-color: rgba(149, 178, 39, 0.08);
+            padding: 3px 8px;
+            border-radius: 999px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .btn-logout {
+            font-size: 14px;
+            font-weight: 600;
+            color: #95B227;
+            background: none;
+            border: 1.5px solid #95B227;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+
+        .btn-logout:hover {
+            background-color: #95B227;
+            color: #FFFFFF;
+        }
+
+        main {
+            padding: 30px;
+            max-width: 1600px;
+            width: 100%;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 350px 380px 1fr;
+            gap: 30px;
+            flex-grow: 1;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel {
+            background-color: #FFFFFF;
+            border: 2px solid #95B227;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 20px rgba(149, 178, 39, 0.03);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            height: fit-content;
+        }
+
+        .panel-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #95B227;
+            border-bottom: 2px dashed rgba(149, 178, 39, 0.2);
+            padding-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .form-section {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            position: relative;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #95B227;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px 12px;
+            font-size: 14px;
+            background-color: #FFFFFF;
+            border: 1.5px solid rgba(149, 178, 39, 0.4);
+            border-radius: 6px;
+            color: #1F2937;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            border-color: #95B227;
+            box-shadow: 0 0 0 3px rgba(149, 178, 39, 0.1);
+        }
+
+        .btn-submit {
+            background-color: #95B227;
+            color: #FFFFFF;
+            border: none;
+            padding: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            text-align: center;
+        }
+
+        .btn-submit:hover {
+            opacity: 0.9;
+        }
+
+        .btn-outline {
+            background: none;
+            color: #95B227;
+            border: 1.5px solid #95B227;
+            padding: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: center;
+        }
+
+        .btn-outline:hover {
+            background-color: #95B227;
+            color: #FFFFFF;
+        }
+
+        /* Searchable Dropdown Styles */
+        .search-select-container {
+            position: relative;
+            width: 100%;
+        }
+
+        .search-select-options {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            width: 100%;
+            background: #FFFFFF;
+            border: 1.5px solid #95B227;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 10;
+            display: none;
+            box-shadow: 0 4px 15px rgba(149, 178, 39, 0.1);
+        }
+
+        .search-select-option {
+            padding: 8px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            color: #4B5563;
+        }
+
+        .search-select-option:hover {
+            background-color: rgba(149, 178, 39, 0.08);
+            color: #95B227;
+        }
+
+        /* Custom Table Lists */
+        .item-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .item-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px;
+            border: 1px solid rgba(149, 178, 39, 0.25);
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .item-name {
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .item-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 99px;
+            text-transform: uppercase;
+        }
+
+        .item-badge.active {
+            border: 1px solid #95B227;
+            color: #95B227;
+        }
+
+        .item-badge.draft {
+            border: 1px dashed rgba(149, 178, 39, 0.6);
+            color: rgba(149, 178, 39, 0.8);
+        }
+
+        .item-badge.inactive {
+            border: 1px solid #E5E7EB;
+            color: #9CA3AF;
+        }
+
+        /* Log console */
+        .log-console {
+            background-color: #FFFFFF;
+            border: 1.5px solid #95B227;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 11px;
+            height: 180px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            color: #4B5563;
+        }
+
+        /* Results / Lab Report style */
+        .report-section {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .report-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            border-bottom: 2px solid #95B227;
+            padding-bottom: 12px;
+        }
+
+        .report-meta {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px 24px;
+            font-size: 13px;
+        }
+
+        .report-meta-item span {
+            font-weight: 600;
+            color: #95B227;
+        }
+
+        .report-score-box {
+            text-align: center;
+            border: 2px solid #95B227;
+            padding: 10px 16px;
+            border-radius: 8px;
+        }
+
+        .report-score-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: #95B227;
+            text-transform: uppercase;
+        }
+
+        .report-score-val {
+            font-size: 28px;
+            font-weight: 800;
+            color: #95B227;
+        }
+
+        /* Anomaly / Severity Table */
+        .report-table-container {
+            width: 100%;
+            overflow-x: auto;
+            border: 1.5px solid #95B227;
+            border-radius: 8px;
+        }
+
+        .report-table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 13px;
+        }
+
+        .report-table th {
+            background-color: rgba(149, 178, 39, 0.05);
+            border-bottom: 1.5px solid #95B227;
+            padding: 10px;
+            font-weight: 700;
+            color: #95B227;
+            text-transform: uppercase;
+            font-size: 11px;
+        }
+
+        .report-table td {
+            padding: 10px;
+            border-bottom: 1px solid rgba(149, 178, 39, 0.15);
+            color: #374151;
+        }
+
+        /* Colorless Severity Indicators (Strictly #95B227 and White) */
+        .severity-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 99px;
+            text-transform: uppercase;
+        }
+
+        .severity-badge.green {
+            border: 1.5px solid #95B227;
+            color: #95B227;
+            background: none;
+        }
+
+        .severity-badge.yellow {
+            border: 1.5px solid #95B227;
+            color: #95B227;
+            background-color: rgba(149, 178, 39, 0.12);
+        }
+
+        .severity-badge.red {
+            background-color: #95B227;
+            color: #FFFFFF;
+            border: 1.5px solid #95B227;
+        }
+
+        /* Interventions Cards */
+        .interventions-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .intervention-card {
+            border: 1.5px solid #95B227;
+            border-radius: 8px;
+            padding: 16px;
+            background: #FFFFFF;
+            position: relative;
+        }
+
+        .intervention-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .intervention-tag {
+            font-size: 10px;
+            font-weight: 700;
+            color: #95B227;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border: 1px solid rgba(149, 178, 39, 0.5);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .intervention-rank {
+            position: absolute;
+            top: -10px;
+            left: 15px;
+            background-color: #95B227;
+            color: #FFFFFF;
+            font-size: 10px;
+            font-weight: 800;
+            padding: 2px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+
+        .intervention-text {
+            font-size: 14px;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+
+        .intervention-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 11px;
+            color: #6B7280;
+            border-top: 1px dashed rgba(149, 178, 39, 0.2);
+            padding-top: 8px;
+        }
+
+        .intervention-meta span strong {
+            color: #95B227;
+        }
+
+        /* Loading Indicator */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 5;
+            border-radius: 12px;
+            display: none;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(149, 178, 39, 0.2);
+            border-top-color: #95B227;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="header-brand">
+            <span class="brand-logo">SUGARCANE</span>
+            <span class="brand-tag">Digital Twin Admins</span>
+        </div>
+        <div class="header-actions">
+            <a href="/logout" class="btn-logout">Logout</a>
+        </div>
+    </header>
+
+    <main>
+        <!-- COLUMN 1: IDEAL CROP & WEIGHT CONFIG -->
+        <section class="panel" style="position: relative;">
+            <div class="loading-overlay" id="loader-col1">
+                <div class="spinner"></div>
+            </div>
+
+            <div class="panel-title">Weight Priorities</div>
+            <form class="form-section" id="form-weights" onsubmit="saveWeights(event)">
+                <div class="form-group">
+                    <label>Drip Irrigation Multiplier</label>
+                    <input type="number" step="0.05" id="weight-drip" required>
+                </div>
+                <div class="form-group">
+                    <label>Sprinkler Irrigation Multiplier</label>
+                    <input type="number" step="0.05" id="weight-sprinkler" required>
+                </div>
+                <div class="form-group">
+                    <label>Newly Planted Crop Multiplier</label>
+                    <input type="number" step="0.05" id="weight-newly-planted" required>
+                </div>
+                <div class="form-group">
+                    <label>Brix Sanity Min / Max Bounds</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="number" step="0.5" id="weight-brix-min" required style="width: 50%;">
+                        <input type="number" step="0.5" id="weight-brix-max" required style="width: 50%;">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Brix Out-Of-Bounds Penalty</label>
+                    <input type="number" step="0.05" id="weight-brix-penalty" required>
+                </div>
+                <button type="submit" class="btn-submit">Save Priorities</button>
+            </form>
+
+            <div class="panel-title">Add Crop Variety</div>
+            <form class="form-section" id="form-add-variety" onsubmit="addVariety(event)">
+                <div class="form-group">
+                    <label>Variety Code (e.g. CO_Test)</label>
+                    <input type="text" id="variety-code" required placeholder="Enter variety code">
+                </div>
+                <div class="form-group">
+                    <label>Variety Name</label>
+                    <input type="text" id="variety-name" required placeholder="Enter display name">
+                </div>
+                <div class="form-group">
+                    <label>Lifecycle Duration (Days)</label>
+                    <input type="number" id="variety-days" required placeholder="420" min="100">
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="variety-status" required>
+                        <option value="draft">Draft</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn-submit">Save Variety Row</button>
+            </form>
+
+            <div class="panel-title">Variety Baseline Registry</div>
+            <div class="item-list" id="list-varieties">
+                <!-- Varieties copopulated dynamically -->
+            </div>
+
+            <button onclick="regenerateBaselines()" class="btn-outline">Regenerate Ideal Twin Baselines</button>
+            <div class="panel-title" style="font-size: 14px; margin-top: 10px;">Execution Console Logs</div>
+            <div class="log-console" id="regenerate-logs">No execution logs yet.</div>
+        </section>
+
+        <!-- COLUMN 2: LIVE FARM PULL FORM -->
+        <section class="panel" style="position: relative;">
+            <div class="loading-overlay" id="loader-col2">
+                <div class="spinner"></div>
+            </div>
+
+            <div class="panel-title">Fetch Live Details</div>
+            <form class="form-section" id="form-live-pull" onsubmit="pullLiveDetails(event)">
+                <div class="form-group">
+                    <label>Farm ID / Name</label>
+                    <input type="text" id="pull-farm-id" required placeholder="e.g. test_farm_8005">
+                </div>
+                <div class="form-group">
+                    <label>Farm Centroid Latitude</label>
+                    <input type="number" step="0.00001" id="pull-lat" required placeholder="20.78991">
+                </div>
+                <div class="form-group">
+                    <label>Farm Centroid Longitude</label>
+                    <input type="number" step="0.00001" id="pull-lon" required placeholder="74.13846">
+                </div>
+                <div class="form-group">
+                    <label>Field Area (Acres)</label>
+                    <input type="number" step="0.1" id="pull-acres" required placeholder="2.5">
+                </div>
+                <div class="form-group">
+                    <label>Sugarcane Variety</label>
+                    <div class="search-select-container" id="variety-select-container">
+                        <input type="text" id="pull-variety-input" required placeholder="Type to search variety..."
+                            onfocus="showOptions('variety')" oninput="filterOptions('variety')">
+                        <input type="hidden" id="pull-variety-val">
+                        <div class="search-select-options" id="variety-select-opts">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Planting Date (DD-MM-YYYY)</label>
+                    <input type="text" id="pull-planting-date" required placeholder="01-01-2026">
+                </div>
+                <button type="submit" class="btn-submit">Query Live GEE & Weather</button>
+            </form>
+
+            <div class="panel-title">Execution Console Logs</div>
+            <div class="log-console" id="pull-logs" style="height: 250px;">No execution logs yet.</div>
+        </section>
+
+        <!-- COLUMN 3: DEVIATIONS AND RECOMMENDATIONS -->
+        <section class="panel" style="position: relative; max-height: 90vh; overflow-y: auto;">
+            <div class="loading-overlay" id="loader-col3">
+                <div class="spinner"></div>
+            </div>
+
+            <div class="panel-title">Analyze & Intervene</div>
+            <div class="form-section" style="flex-direction: row; align-items: flex-end; gap: 15px;">
+                <div class="form-group" style="flex-grow: 1;">
+                    <label>Select Cleaned Farm ID</label>
+                    <div class="search-select-container" id="farm-select-container">
+                        <input type="text" id="analyze-farm-input" placeholder="Type to search farm ID..."
+                            onfocus="showOptions('farm')" oninput="filterOptions('farm')">
+                        <input type="hidden" id="analyze-farm-val">
+                        <input type="hidden" id="analyze-variety-val">
+                        <div class="search-select-options" id="farm-select-opts">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+                <button onclick="runGapAnalysis()" class="btn-submit" style="padding: 12px 24px;">Run Gap
+                    Analysis</button>
+            </div>
+
+            <!-- RESULT PORTLET -->
+            <div id="analysis-results" style="display: none;" class="report-section">
+
+                <div class="report-header">
+                    <div>
+                        <h2 style="color: #95B227; font-weight: 800; font-size: 20px; margin-bottom: 4px;"
+                            id="lbl-farm-title">FARM REPORT</h2>
+                        <div class="report-meta">
+                            <div class="report-meta-item"><span>Variety:</span> <label id="lbl-variety"></label></div>
+                            <div class="report-meta-item"><span>Planting Date:</span> <label id="lbl-planting"></label>
+                            </div>
+                            <div class="report-meta-item"><span>Current DAP:</span> <label id="lbl-current-dap"></label>
+                            </div>
+                            <div class="report-meta-item"><span>Last Obs:</span> <label id="lbl-last-obs"></label></div>
+                        </div>
+                    </div>
+                    <div class="report-score-box">
+                        <div class="report-score-label">Health Score</div>
+                        <div class="report-score-val" id="lbl-health-score">--</div>
+                    </div>
+                </div>
+
+                <div class="panel-title">Blood-Report Anomaly Sheet</div>
+                <div class="report-table-container">
+                    <table class="report-table">
+                        <thead>
+                            <tr>
+                                <th>Index</th>
+                                <th>Growth Stage</th>
+                                <th>DAP Bin</th>
+                                <th>Observed</th>
+                                <th>Ideal Mean</th>
+                                <th>Abs Deviation</th>
+                                <th>% Deviation</th>
+                                <th>Severity Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-deviations-body">
+                            <!-- Dynamically populated rows -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="panel-title">Consolidated Action & Intervention Plan</div>
+                <div class="interventions-container" id="list-interventions">
+                    <!-- Cards populated dynamically -->
+                </div>
+            </div>
+        </section>
+    </div>
+</main>
+
+    <script>
+        // Store config lists locally
+        let varietiesList = [];
+        let farmsList = [];
+
+        // Page navigation helper
+        function switchPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+            // Show target page
+            document.getElementById('page-' + pageId).classList.add('active');
+            
+            // Update active state of nav items
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // Find active nav button
+            const btn = Array.from(document.querySelectorAll('.nav-item')).find(el => {
+                const oc = el.getAttribute('onclick');
+                return oc && oc.includes(pageId);
+            });
+            if (btn) {
+                btn.classList.add('active');
+            }
+            
+            sessionStorage.setItem('active_page', pageId);
+        }
+
+        // Fetch initial configs
+        window.addEventListener('DOMContentLoaded', () => {
+            loadWeights();
+            loadVarieties();
+            loadFarms();
+            
+            const activePage = sessionStorage.getItem('active_page') || 'config';
+            switchPage(activePage);
+        });
+
+        // --- OPTION SELECT HELPERS ---
+        function showOptions(type) {
+            document.getElementById(type + '-select-opts').style.display = 'block';
+        }
+
+        // Close options when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!document.getElementById('variety-select-container').contains(e.target)) {
+                document.getElementById('variety-select-opts').style.display = 'none';
+            }
+            if (!document.getElementById('farm-select-container').contains(e.target)) {
+                document.getElementById('farm-select-opts').style.display = 'none';
+            }
+        });
+
+        function filterOptions(type) {
+            const inputVal = document.getElementById('pull-' + type + '-input' || 'analyze-' + type + '-input').value.toLowerCase();
+            const container = document.getElementById(type + '-select-opts');
+            const options = container.getElementsByClassName('search-select-option');
+
+            for (let opt of options) {
+                const text = opt.innerText.toLowerCase();
+                opt.style.display = text.includes(inputVal) ? 'block' : 'none';
+            }
+        }
+
+        function selectOption(type, val, label, extra = null) {
+            if (type === 'variety') {
+                document.getElementById('pull-variety-input').value = label;
+                document.getElementById('pull-variety-val').value = val;
+                document.getElementById('variety-select-opts').style.display = 'none';
+            } else if (type === 'farm') {
+                document.getElementById('analyze-farm-input').value = label;
+                document.getElementById('analyze-farm-val').value = val;
+                document.getElementById('analyze-variety-val').value = extra; // variety
+                document.getElementById('farm-select-opts').style.display = 'none';
+            }
+        }
+
+        // --- LOAD DATA ---
+        function loadWeights() {
+            fetch('/api/config/weights')
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('weight-drip').value = data.drip_multiplier;
+                    document.getElementById('weight-sprinkler').value = data.sprinkler_multiplier;
+                    document.getElementById('weight-newly-planted').value = data.newly_planted_multiplier;
+                    document.getElementById('weight-brix-min').value = data.brix_sanity_min;
+                    document.getElementById('weight-brix-max').value = data.brix_sanity_max;
+                    document.getElementById('weight-brix-penalty').value = data.brix_penalty_multiplier;
+                });
+        }
+
+        function loadVarieties() {
+            fetch('/api/config/varieties')
+                .then(res => res.json())
+                .then(data => {
+                    varietiesList = data;
+
+                    // Render registry list
+                    const listContainer = document.getElementById('list-varieties');
+                    listContainer.innerHTML = '';
+
+                    // Render select options
+                    const selectOpts = document.getElementById('variety-select-opts');
+                    selectOpts.innerHTML = '';
+
+                    data.forEach(v => {
+                        // Registry Row
+                        const row = document.createElement('div');
+                        row.className = 'item-row';
+                        row.innerHTML = `
+                            <div>
+                                <span class="item-name">${v.variety}</span>
+                                <span style="font-size: 11px; color:#6b7280; display:block;">${v.name} (${v.lifecycle_days}d)</span>
+                            </div>
+                            <span class="item-badge ${v.status}">${v.status}</span>
+                        `;
+                        listContainer.appendChild(row);
+
+                        // Select Option
+                        if (v.status !== 'inactive') {
+                            const opt = document.createElement('div');
+                            opt.className = 'search-select-option';
+                            opt.innerText = `${v.variety} — ${v.name}`;
+                            opt.onclick = () => selectOption('variety', v.variety, `${v.variety} — ${v.name}`);
+                            selectOpts.appendChild(opt);
+                        }
+                    });
+                });
+        }
+
+        function loadFarms() {
+            fetch('/api/farms')
+                .then(res => res.json())
+                .then(data => {
+                    farmsList = data;
+                    const selectOpts = document.getElementById('farm-select-opts');
+                    selectOpts.innerHTML = '';
+
+                    data.forEach(f => {
+                        const opt = document.createElement('div');
+                        opt.className = 'search-select-option';
+                        opt.innerText = `Farm ${f.farm_id} (${f.farmer_name}) — ${f.variety}`;
+                        opt.onclick = () => selectOption('farm', f.farm_id, `Farm ${f.farm_id} (${f.farmer_name})`, f.variety);
+                        selectOpts.appendChild(opt);
+                    });
+                });
+        }
+
+        // --- SUBMIT HANDLERS ---
+        function saveWeights(e) {
+            e.preventDefault();
+            document.getElementById('loader-col1').style.display = 'flex';
+
+            const payload = {
+                drip_multiplier: document.getElementById('weight-drip').value,
+                sprinkler_multiplier: document.getElementById('weight-sprinkler').value,
+                newly_planted_multiplier: document.getElementById('weight-newly-planted').value,
+                brix_sanity_min: document.getElementById('weight-brix-min').value,
+                brix_sanity_max: document.getElementById('weight-brix-max').value,
+                brix_penalty_multiplier: document.getElementById('weight-brix-penalty').value
+            };
+
+            fetch('/api/config/weights', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('loader-col1').style.display = 'none';
+                    if (data.status === 'success') {
+                        alert('Priority multipliers saved successfully.');
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                });
+        }
+
+        function addVariety(e) {
+            e.preventDefault();
+            document.getElementById('loader-col1').style.display = 'flex';
+
+            const payload = {
+                variety: document.getElementById('variety-code').value,
+                name: document.getElementById('variety-name').value,
+                lifecycle_days: document.getElementById('variety-days').value,
+                status: document.getElementById('variety-status').value,
+                notes: ''
+            };
+
+            fetch('/api/config/varieties', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('loader-col1').style.display = 'none';
+                    if (data.status === 'success') {
+                        alert('Variety added successfully.');
+                        document.getElementById('form-add-variety').reset();
+                        loadVarieties();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                });
+        }
+
+        function regenerateBaselines() {
+            document.getElementById('loader-col1').style.display = 'flex';
+            const logBox = document.getElementById('regenerate-logs');
+            logBox.innerText = "Rebuilding baselines, please wait (this runs quality check, binning, smoothing and curve plotting)...";
+
+            fetch('/api/ideal-twin/regenerate', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('loader-col1').style.display = 'none';
+                    logBox.innerText = data.logs;
+                    if (data.status === 'success') {
+                        alert('Ideal baseline curves generated and visual plots created successfully.');
+                    } else {
+                        alert('Error regenerating ideal twins: ' + data.message);
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('loader-col1').style.display = 'none';
+                    logBox.innerText = err.toString();
+                });
+        }
+
+        function pullLiveDetails(e) {
+            e.preventDefault();
+            document.getElementById('loader-col2').style.display = 'flex';
+            const logBox = document.getElementById('pull-logs');
+            logBox.innerText = "Querying live coordinates, Sentinel multispectral, SAR backscatter, and weather reanalysis on Google Earth Engine...";
+
+            const payload = {
+                farm_id: document.getElementById('pull-farm-id').value,
+                latitude: document.getElementById('pull-lat').value,
+                longitude: document.getElementById('pull-lon').value,
+                field_area_acres: document.getElementById('pull-acres').value,
+                variety: document.getElementById('pull-variety-val').value,
+                planting_date: document.getElementById('pull-planting-date').value
+            };
+
+            fetch('/api/live-twin/pull', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('loader-col2').style.display = 'none';
+                    if (data.status === 'success') {
+                        logBox.innerText = data.message + "\n\nOutput target: " + data.output_path;
+                        alert('GEE Live pull completed. Farm details saved successfully.');
+                        loadFarms(); // reload farms dropdown list
+                    } else {
+                        logBox.innerText = "Pull failed: " + data.message + "\n\n" + (data.details || "");
+                        alert('Error querying live details: ' + data.message);
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('loader-col2').style.display = 'none';
+                    logBox.innerText = err.toString();
+                });
+        }
+
+        function runGapAnalysis() {
+            const farmId = document.getElementById('analyze-farm-val').value;
+            const variety = document.getElementById('analyze-variety-val').value;
+
+            if (!farmId || !variety) {
+                alert('Please select a farm from the searchable list first.');
+                return;
+            }
+
+            document.getElementById('loader-col3').style.display = 'flex';
+
+            fetch('/api/live-twin/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ farm_id: farmId, variety: variety })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('loader-col3').style.display = 'none';
+                    if (data.status === 'success') {
+                        renderGapReport(data.plan);
+                    } else {
+                        alert('Error running gap analysis: ' + data.message);
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('loader-col3').style.display = 'none';
+                    alert('Analysis failed: ' + err.toString());
+                });
+        }
+
+        // --- RENDER ANOMALY / LAB REPORT DISPLAY ---
+        function renderGapReport(plan) {
+            document.getElementById('analysis-results').style.display = 'block';
+
+            // Header
+            document.getElementById('lbl-farm-title').innerText = `GAP LAB REPORT — ${plan.farm_id}`;
+            document.getElementById('lbl-variety').innerText = plan.variety;
+            document.getElementById('lbl-planting').innerText = plan.planting_date;
+            document.getElementById('lbl-current-dap').innerText = plan.current_dap + " days";
+            document.getElementById('lbl-last-obs').innerText = plan.last_observation_date || "N/A";
+
+            // Health Score
+            document.getElementById('lbl-health-score').innerText = plan.overall_health_score + "%";
+
+            // Deviation Table Rows
+            const tblBody = document.getElementById('tbl-deviations-body');
+            tblBody.innerHTML = '';
+
+            // Collect the latest bin deviation for each index
+            for (let idxKey in plan.deviations) {
+                const list = plan.deviations[idxKey];
+                if (list.length === 0) continue;
+
+                // Get latest evaluated bin row
+                const rowData = list[list.length - 1];
+                const tr = document.createElement('tr');
+
+                const obsVal = rowData.observed !== null ? rowData.observed.toFixed(3) : "GAP";
+                const idealVal = rowData.ideal_mean !== null ? rowData.ideal_mean.toFixed(3) : "N/A";
+                const absDev = rowData.absolute_deviation !== null ? (rowData.absolute_deviation > 0 ? "+" : "") + rowData.absolute_deviation.toFixed(3) : "--";
+                const pctDev = rowData.percentage_deviation !== null ? (rowData.percentage_deviation > 0 ? "+" : "") + rowData.percentage_deviation.toFixed(1) + "%" : "--";
+
+                const sevClass = rowData.severity.toLowerCase();
+                const checkIcon = rowData.severity === 'GREEN' ? '✓ ' : '';
+
+                tr.innerHTML = `
+                    <td style="font-weight:700;">${idxKey}</td>
+                    <td>${rowData.growth_stage}</td>
+                    <td>DAP ${rowData.dap_bin}</td>
+                    <td>${obsVal}</td>
+                    <td>${idealVal}</td>
+                    <td style="font-family:monospace;">${absDev}</td>
+                    <td style="font-family:monospace;">${pctDev}</td>
+                    <td>
+                        <span class="severity-badge ${sevClass}">${checkIcon}${rowData.severity}</span>
+                    </td>
+                `;
+                tblBody.appendChild(tr);
+            }
+
+            // Action plan list
+            const planContainer = document.getElementById('list-interventions');
+            planContainer.innerHTML = '';
+
+            plan.consolidated_intervention_plan.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'intervention-card';
+
+                const sourceTag = item.source === 'both' ? 'AI & EXPERT RULES' : (item.source === 'rule' ? 'EXPERT RULE ALERT' : 'AGRONOMIST INSIGHT');
+
+                card.innerHTML = `
+                    <span class="intervention-rank">Rank ${item.priority_rank}</span>
+                    <div class="intervention-header" style="margin-top:5px;">
+                        <span class="intervention-tag">${sourceTag}</span>
+                        <span style="font-size: 11px; font-weight:700; color:#95B227; text-transform:uppercase;">${item.urgency.replace('_', ' ')}</span>
+                    </div>
+                    <div class="intervention-text">${item.intervention}</div>
+                    <div style="font-size: 12px; color:#555555; margin-bottom:8px; line-height: 1.3;">
+                        <strong>Expected outcome:</strong> ${item.expected_outcome}
+                    </div>
+                    <div class="intervention-meta">
+                        <span>Timing: <strong>${item.timing}</strong></span>
+                        <span>Category: <strong>${item.category.toUpperCase()}</strong></span>
+                    </div>
+                `;
+                planContainer.appendChild(card);
+            });
+        }
+    </script>
+</body>
+
+</html>

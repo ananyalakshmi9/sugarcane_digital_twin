@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sugarcane Digital Twin Platform</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- LEFT NAVIGATION RAIL -->
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="brand-title">SUGARCANE</span>
+            <span class="brand-sub">Digital Twin Platform</span>
+        </div>
+        
+        <nav class="nav-menu">
+            <button class="nav-link active" onclick="switchPage('dashboard')">
+                Dashboard
+            </button>
+            <button class="nav-link" onclick="switchPage('ideal')">
+                Ideal Twin
+            </button>
+            <button class="nav-link" onclick="switchPage('puller')">
+                Current Twin
+            </button>
+            <button class="nav-link" onclick="switchPage('analysis')">
+                Gap Analysis
+            </button>
+            <button class="nav-link" onclick="switchPage('conclusion')">
+                Conclusion
+            </button>
+        </nav>
+        
+        <div class="sidebar-footer">
+            <div class="system-status">
+                <div class="status-dot"></div>
+                <span>All services online</span>
+            </div>
+            
+            <div class="user-profile">
+                <div class="user-info">
+                    <span class="user-name">Admin User</span>
+                    <span class="user-role">Platform Operator</span>
+                </div>
+                <form action="/logout" method="GET" style="display:inline;">
+                    <button type="submit" class="btn-logout-icon" title="Logout" style="font-size:12px; font-weight:700;">LOGOUT</button>
+                </form>
+            </div>
+        </div>
+    </aside>
+
+    <!-- MAIN CONTENT WORKSPACE -->
+    <main class="workspace">
+        
+        <!-- PAGE 1: EXECUTIVE DASHBOARD -->
+        <div id="page-dashboard" class="page active">
+            <div class="hero">
+                <h1>Welcome back, Digital Twin Admin</h1>
+                <p>Monitor farm health status, twin baseline generations, and intervention outcomes across strata.</p>
+            </div>
+            
+            <div class="grid-dashboard">
+                <!-- Farm Health Universe radial network -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <span class="panel-title">Farm Health Universe</span>
+                            <span class="panel-subtitle">Radial distribution of <span id="lbl-total-farms-subtitle">--</span> active farms across health strata.</span>
+                        </div>
+                    </div>
+                    <div class="universe-container" id="farm-universe">
+                        <!-- Loaded dynamically via SVG in JS -->
+                    </div>
+                </div>
+                
+                <!-- Health Distribution and system status -->
+                <div style="display:flex; flex-direction:column; gap:24px;">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Health Distribution</span>
+                                <span class="panel-subtitle">Total percentage health segmentation</span>
+                            </div>
+                        </div>
+                        <div class="donut-container">
+                            <div class="donut-container" id="donut-chart">
+                                <!-- Donut SVG loaded dynamically -->
+                            </div>
+                            <div class="donut-legend">
+                                <div class="legend-item"><div class="legend-color" style="background-color:var(--light-green);"></div><span>Healthy (74%)</span></div>
+                                <div class="legend-item"><div class="legend-color" style="background-color:var(--primary-green);"></div><span>Watch (18%)</span></div>
+                                <div class="legend-item"><div class="legend-color" style="background-color:var(--dark-green);"></div><span>Critical (8%)</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Platform Status</span>
+                                <span class="panel-subtitle">Active connection verification</span>
+                            </div>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:12px;">
+                            <div class="indicator-row"><span>GEE Engine Service</span><span style="font-weight:700; color:var(--dark-green);">ONLINE</span></div>
+                            <div class="indicator-row"><span>Weather API Service</span><span style="font-weight:700; color:var(--dark-green);">ONLINE</span></div>
+                            <div class="indicator-row"><span>Strata Database Connection</span><span style="font-weight:700; color:var(--dark-green);">STABLE</span></div>
+                            <div class="indicator-row"><span>Twin Generation Engine</span><span style="font-weight:700; color:var(--dark-green);">READY</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Top risk farms table (full-width) -->
+            <div class="panel">
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-title">Top Risk Farms</span>
+                        <span class="panel-subtitle">Farms requiring immediate crop scout visits or irrigation scheduling.</span>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Farm ID</th>
+                                <th>Health Score</th>
+                                <th>Primary Issue</th>
+                                <th>Last Updated</th>
+                                <th>Action Required</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Loaded dynamically via JS stats API -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE 2: IDEAL TWIN DESIGNER -->
+        <div id="page-ideal" class="page">
+            <div class="hero">
+                <h1>Ideal Twin Baselines</h1>
+                <p>Register crop lifecycles, configure prioritizing multipliers, and build baseline curves.</p>
+            </div>
+            
+            <!-- Variety Baseline Registry -->
+            <div class="panel" style="position: relative;">
+                <div class="loading-overlay" id="loader-registry" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.85); align-items:center; justify-content:center; z-index:10;"><div class="status-dot" style="animation:spin 1s linear infinite;"></div></div>
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-title">Variety Baseline Registry</span>
+                        <span class="panel-subtitle">Authorized sugarcane crop lifecycles</span>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Code</th>
+                                <th>Display Name</th>
+                                <th>Lifespan</th>
+                                <th>Status</th>
+                                <th>Agronomic Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-varieties-body">
+                            <!-- Dynamic rows loaded in js -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Add Raw Farm Record Form -->
+            <div class="panel" style="position:relative;">
+                <div class="loading-overlay" id="loader-raw-farm" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.85); align-items:center; justify-content:center; z-index:10;"><div class="status-dot" style="animation:spin 1s linear infinite;"></div></div>
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-title">Add Raw Farm Record</span>
+                        <span class="panel-subtitle">Insert new raw crop observations and location centroids directly into the database sheets</span>
+                    </div>
+                </div>
+                <form class="form-section" id="form-add-raw-farm" onsubmit="submitRawFarm(event)" style="display:flex; flex-direction:column; gap:24px;">
+                    <div style="font-weight:700; font-size:14px; color:var(--dark-green); border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:4px;">1. General Info</div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label>Farm ID / Name</label>
+                            <input type="text" id="raw-farm-id" required placeholder="e.g. 5194">
+                        </div>
+                        <div class="form-group">
+                            <label>Farmer Name</label>
+                            <input type="text" id="raw-farmer-name" required placeholder="e.g. Keda parsharam jadhav">
+                        </div>
+                        <div class="form-group">
+                            <label>Year (Season)</label>
+                            <input type="text" id="raw-year" required placeholder="e.g. 2024-25">
+                        </div>
+                        <div class="form-group">
+                            <label>Village</label>
+                            <input type="text" id="raw-village" required placeholder="e.g. Village Name">
+                        </div>
+                        <div class="form-group">
+                            <label>Sugarcane Variety</label>
+                            <input type="text" id="raw-variety" required placeholder="e.g. CO_265 or a new variety" list="raw-variety-list">
+                            <datalist id="raw-variety-list">
+                                <option value="CO_265">CO_265 (Adsali)</option>
+                                <option value="CO_86032">CO_86032 (Suru)</option>
+                                <option value="8005">8005 (Reference)</option>
+                            </datalist>
+                        </div>
+                        <div class="form-group">
+                            <label>Newly Planted / Ratoon</label>
+                            <select id="raw-crop-type" required>
+                                <option value="Newly Planted">Newly Planted</option>
+                                <option value="Ratoon">Ratoon</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="font-weight:700; font-size:14px; color:var(--dark-green); border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:4px;">2. Location Centroid & Acreage</div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label>Latitude Centroid</label>
+                            <input type="number" step="0.00001" id="raw-lat" required placeholder="20.78991">
+                        </div>
+                        <div class="form-group">
+                            <label>Longitude Centroid</label>
+                            <input type="number" step="0.00001" id="raw-lon" required placeholder="74.13846">
+                        </div>
+                        <div class="form-group">
+                            <label>Field Area (Acres)</label>
+                            <input type="number" step="0.1" id="raw-area-acres" required placeholder="3.0">
+                        </div>
+                    </div>
+
+                    <div style="font-weight:700; font-size:14px; color:var(--dark-green); border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:4px;">3. Dates, Yield & Operations</div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label>Planting Date (DD-MM-YYYY)</label>
+                            <input type="text" id="raw-planting-date" required placeholder="01-01-2025">
+                        </div>
+                        <div class="form-group">
+                            <label>Harvest Date (DD-MM-YYYY)</label>
+                            <input type="text" id="raw-harvest-date" placeholder="e.g. 15-11-2025">
+                        </div>
+                        <div class="form-group">
+                            <label>Yield Achieved (Tonnes)</label>
+                            <input type="number" step="0.1" id="raw-yield-achieved" placeholder="e.g. 239.9">
+                        </div>
+                        <div class="form-group">
+                            <label>Soil Type</label>
+                            <input type="text" id="raw-soil-type" placeholder="e.g. Black / Clay">
+                        </div>
+                        <div class="form-group">
+                            <label>Land Preparation</label>
+                            <input type="text" id="raw-land-prep" placeholder="e.g. Deep Ploughing">
+                        </div>
+                        <div class="form-group">
+                            <label>Untoward Incidents Faced</label>
+                            <input type="text" id="raw-incident" placeholder="e.g. Pests or 0/1">
+                        </div>
+                        <div class="form-group">
+                            <label>Cost of Cultivation (INR)</label>
+                            <input type="number" id="raw-total-cost" placeholder="e.g. 45000">
+                        </div>
+                        <div class="form-group">
+                            <label>Total Revenue (INR)</label>
+                            <input type="number" id="raw-total-revenue" placeholder="e.g. 120000">
+                        </div>
+                    </div>
+
+                    <div style="font-weight:700; font-size:14px; color:var(--dark-green); border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:4px;">4. Irrigation & Fertigation</div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label>Irrigation Type</label>
+                            <select id="raw-irrigation-type">
+                                <option value="Channel">Channel</option>
+                                <option value="Drip">Drip</option>
+                                <option value="Sprinkler">Sprinkler</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Irrigation Interval - Veg Stage (Days)</label>
+                            <input type="number" id="raw-irrigation-veg" placeholder="e.g. 15">
+                        </div>
+                        <div class="form-group">
+                            <label>Irrigation Interval - Rep Stage (Days)</label>
+                            <input type="number" id="raw-irrigation-rep" placeholder="e.g. 15">
+                        </div>
+                        <div class="form-group">
+                            <label>Fertigation Details</label>
+                            <input type="text" id="raw-fertigation" placeholder="e.g. Nitrogen / Potash via drip">
+                        </div>
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label>Fertilizer Application (Bags, Types, Timing)</label>
+                            <input type="text" id="raw-fertilizer-app" placeholder="e.g. basal = 4 bags, 45 DAP = 8 bags">
+                        </div>
+                    </div>
+
+                    <div style="font-weight:700; font-size:14px; color:var(--dark-green); border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:4px;">5. Chemical & Biological Applications</div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label>PGR / Biostimulants (GA3, 6BA)</label>
+                            <input type="text" id="raw-pgr" placeholder="e.g. Yes/No and timings">
+                        </div>
+                        <div class="form-group">
+                            <label>Micronutrients Used</label>
+                            <input type="text" id="raw-micronutrients" placeholder="e.g. Yes/No and timings">
+                        </div>
+                        <div class="form-group">
+                            <label>Soil Health Initiatives</label>
+                            <input type="text" id="raw-soil-health" placeholder="e.g. Soil sample tested">
+                        </div>
+                        <div class="form-group">
+                            <label>Humic Acid Applications</label>
+                            <input type="text" id="raw-humic-acid" placeholder="e.g. Yes/No">
+                        </div>
+                        <div class="form-group">
+                            <label>Multi Micronutrient / Vasanth Urja</label>
+                            <input type="text" id="raw-multi-nutrient" placeholder="e.g. Yes/No">
+                        </div>
+                        <div class="form-group">
+                            <label>Seaweed Extract</label>
+                            <input type="text" id="raw-seaweed-extract" placeholder="e.g. Yes/No">
+                        </div>
+                        <div class="form-group">
+                            <label>Biofertilizers</label>
+                            <input type="text" id="raw-biofertilizers" placeholder="e.g. Rhizobium, Azotobacter">
+                        </div>
+                        <div class="form-group">
+                            <label>Biocontrol Agents</label>
+                            <input type="text" id="raw-biocontrol-agents" placeholder="e.g. Trichoderma, Pseudomonas">
+                        </div>
+                        <div class="form-group">
+                            <label>Biopesticide</label>
+                            <input type="text" id="raw-biopesticide" placeholder="e.g. Neem Oil">
+                        </div>
+                        <div class="form-group">
+                            <label>Amino Acids</label>
+                            <input type="text" id="raw-amino-acids" placeholder="e.g. Yes/No">
+                        </div>
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label>Special Practices Followed</label>
+                            <input type="text" id="raw-special-practices" placeholder="e.g. Trash mulching, double row planting">
+                        </div>
+                    </div>
+
+                    <div style="font-weight:700; font-size:14px; color:var(--dark-green); border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:4px;">6. Sugar Quality Metrics</div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Brix %</label>
+                            <input type="number" step="0.1" id="raw-brix" placeholder="e.g. 11.5">
+                        </div>
+                        <div class="form-group">
+                            <label>CCS (Commercial Cane Sugar) %</label>
+                            <input type="number" step="0.1" id="raw-ccs" placeholder="e.g. 10.8">
+                        </div>
+                    </div>
+
+                    <div style="display:flex; justify-content:flex-end; gap:12px; border-top:1px solid var(--border); padding-top:20px;">
+                        <button type="reset" class="btn btn-outline" style="min-width: 120px;">Reset Form</button>
+                        <button type="submit" class="btn btn-primary" style="min-width: 180px;">Save Farm Record</button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Baseline Curves Graphics -->
+            <div class="panel">
+                <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <span class="panel-title">Baseline Intelligence Curves</span>
+                        <span class="panel-subtitle">Smoothed parameter twins mapped across growth stages</span>
+                    </div>
+                    <div style="min-width: 220px;">
+                        <select id="sel-variety-curves" onchange="renderBaselineCurves()" style="width:100%; padding: 8px 12px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius-sm); outline:none; background-color:var(--background); color:var(--text); cursor:pointer;">
+                            <!-- Loaded dynamically in JS -->
+                        </select>
+                    </div>
+                </div>
+                <div class="curves-grid" id="baseline-curves">
+                    <!-- SVG charts generated dynamically in js -->
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE 3: CURRENT TWIN EXTRACTOR -->
+        <div id="page-puller" class="page">
+            <div class="hero">
+                <h1>Current Twin Extractor</h1>
+                <p>Pull live GEE satellite indices and weather details dynamically to construct a farm's current state.</p>
+            </div>
+            
+            <div class="grid-main-split">
+                <!-- Left Details Form -->
+                <div class="panel" style="position:relative;">
+                    <div class="loading-overlay" id="loader-puller" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.85); align-items:center; justify-content:center; z-index:10;"><div class="status-dot" style="animation:spin 1s linear infinite;"></div></div>
+                    <div class="panel-header">
+                        <div>
+                            <span class="panel-title">Fetch Live Details</span>
+                            <span class="panel-subtitle">Centroid GEE extractor parameters</span>
+                        </div>
+                    </div>
+                    
+                    <form class="form-section" id="form-live-pull" onsubmit="pullLiveDetails(event)" style="display:flex; flex-direction:column; gap:16px;">
+                        <div class="form-group">
+                            <label>Farm ID / Name</label>
+                            <input type="text" id="pull-farm-id" required placeholder="e.g. test_farm_8005">
+                        </div>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>Latitude Centroid</label>
+                                <input type="number" step="0.00001" id="pull-lat" required placeholder="20.78991">
+                            </div>
+                            <div class="form-group">
+                                <label>Longitude Centroid</label>
+                                <input type="number" step="0.00001" id="pull-lon" required placeholder="74.13846">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Field Area (Acres)</label>
+                            <input type="number" step="0.1" id="pull-acres" required placeholder="2.5">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Sugarcane Variety</label>
+                            <div class="search-select-container" id="variety-select-container">
+                                <input type="text" id="pull-variety-input" required placeholder="Type to search variety..." onfocus="showOptions('variety')" oninput="filterOptions('variety')">
+                                <input type="hidden" id="pull-variety-val">
+                                <div class="search-select-options" id="variety-select-opts">
+                                    <!-- Populated dynamically in js -->
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Planting Date (DD-MM-YYYY)</label>
+                            <input type="text" id="pull-planting-date" required placeholder="01-01-2026">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Query Live GEE & Weather</button>
+                    </form>
+                </div>
+                
+                <!-- Satellite Boundaries Map and Extraction console -->
+                <div style="display:flex; flex-direction:column; gap:32px;">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Farm Location Boundary Visualization</span>
+                                <span class="panel-subtitle">Circular buffer projection matching acreage</span>
+                            </div>
+                        </div>
+                        <div style="height:200px; display:flex; align-items:center; justify-content:center; background-color:var(--section-bg); border:1px solid var(--border); border-radius:var(--radius-sm);">
+                            <svg viewBox="0 0 100 100" width="120" height="120">
+                                <rect x="5" y="5" width="90" height="90" fill="none" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 2" />
+                                <circle cx="50" cy="50" r="30" fill="var(--light-green)" opacity="0.3" stroke="var(--primary-green)" stroke-width="2" />
+                                <circle cx="50" cy="50" r="2" fill="var(--dark-green)" />
+                                <line x1="50" y1="50" x2="80" y2="50" stroke="var(--dark-green)" stroke-width="1" stroke-dasharray="2 2" />
+                                <text x="65" y="44" font-size="6" fill="var(--dark-green)" font-weight="700">Radius</text>
+                            </svg>
+                        </div>
+                    </div>
+                    
+                    <!-- Logs removed from UI as requested -->
+                </div>
+            </div>
+            
+            <!-- Animated Pipeline flow -->
+            <div class="panel">
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-title">Extraction Pipeline Workflow</span>
+                        <span class="panel-subtitle">Horizontal stages tracking imagery queries</span>
+                    </div>
+                </div>
+                
+                <div class="pipeline-flow">
+                    <div class="pipeline-step" id="extraction-step-1">
+                        <div class="pipeline-circle">1</div>
+                        <span class="pipeline-label">Centroid</span>
+                    </div>
+                    <div class="pipeline-connector" id="extraction-conn-1"></div>
+                    
+                    <div class="pipeline-step" id="extraction-step-2">
+                        <div class="pipeline-circle">2</div>
+                        <span class="pipeline-label">Weather</span>
+                    </div>
+                    <div class="pipeline-connector" id="extraction-conn-2"></div>
+                    
+                    <div class="pipeline-step" id="extraction-step-3">
+                        <div class="pipeline-circle">3</div>
+                        <span class="pipeline-label">Sentinel-2</span>
+                    </div>
+                    <div class="pipeline-connector" id="extraction-conn-3"></div>
+                    
+                    <div class="pipeline-step" id="extraction-step-4">
+                        <div class="pipeline-circle">4</div>
+                        <span class="pipeline-label">Sentinel-1</span>
+                    </div>
+                    <div class="pipeline-connector" id="extraction-conn-4"></div>
+                    
+                    <div class="pipeline-step" id="extraction-step-5">
+                        <div class="pipeline-circle">5</div>
+                        <span class="pipeline-label">Features</span>
+                    </div>
+                    <div class="pipeline-connector" id="extraction-conn-5"></div>
+                    
+                    <div class="pipeline-step" id="extraction-step-6">
+                        <div class="pipeline-circle">6</div>
+                        <span class="pipeline-label">Storage</span>
+                    </div>
+                    <div class="pipeline-connector" id="extraction-conn-6"></div>
+                    
+                    <div class="pipeline-step" id="extraction-step-7">
+                        <div class="pipeline-circle">7</div>
+                        <span class="pipeline-label">Twin Done</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE 4: GAP ANALYSIS FLAGSHIP ENGINE -->
+        <div id="page-analysis" class="page">
+            <div class="hero">
+                <h1>Flagship Gap Analysis</h1>
+                <p>Compare a farm's current observation parameters directly against its ideal crop variety baselines.</p>
+            </div>
+            
+            <div class="panel" style="position:relative;">
+                <div class="loading-overlay" id="loader-analysis" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.85); align-items:center; justify-content:center; z-index:10;"><div class="status-dot" style="animation:spin 1s linear infinite;"></div></div>
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-title">Farm Selection</span>
+                        <span class="panel-subtitle">Choose farm ID profiles to initiate twins comparison</span>
+                    </div>
+                </div>
+                
+                <div style="display:flex; gap:16px; align-items:flex-end;">
+                    <div class="form-group" style="flex-grow:1;">
+                        <label>Search Farm Profile</label>
+                        <div class="search-select-container" id="farm-select-container">
+                            <input type="text" id="analyze-farm-input" placeholder="Type to search farm ID..." onfocus="showOptions('farm')" oninput="filterOptions('farm')">
+                            <input type="hidden" id="analyze-farm-val">
+                            <input type="hidden" id="analyze-variety-val">
+                            <div class="search-select-options" id="farm-select-opts">
+                                <!-- Populated dynamically in js -->
+                            </div>
+                        </div>
+                    </div>
+                    <button onclick="runGapAnalysis()" class="btn btn-primary" style="padding:12px 24px;">Run Gap Analysis</button>
+                </div>
+            </div>
+            
+            <!-- RESULTS VIEWS (Hidden initially) -->
+            <div id="analysis-results" style="display:none; flex-direction:column; gap:32px;">
+                <div class="grid-main-split">
+                    <!-- Twin report header details -->
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title" id="lbl-farm-title">GAP LAB REPORT</span>
+                                <span class="panel-subtitle">Agronomic strata comparison metadata</span>
+                            </div>
+                        </div>
+                        
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; font-size:14px; line-height:1.6;">
+                            <div><span style="font-weight:600; color:var(--dark-green);">Crop Variety:</span> <span id="lbl-variety"></span></div>
+                            <div><span style="font-weight:600; color:var(--dark-green);">Planting Date:</span> <span id="lbl-planting"></span></div>
+                            <div><span style="font-weight:600; color:var(--dark-green);">Current DAP:</span> <span id="lbl-current-dap"></span></div>
+                            <div><span style="font-weight:600; color:var(--dark-green);">Last Observation Date:</span> <span id="lbl-last-obs"></span></div>
+                            <div><span style="font-weight:600; color:var(--dark-green);">Active Growth Stage:</span> <span id="lbl-growth-stage"></span></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Circular Health Score -->
+                    <div class="panel" style="align-items:center; justify-content:center; text-align:center;">
+                        <span class="brand-sub" style="margin-bottom:6px;">OVERALL HEALTH SCORE</span>
+                        <div style="width:100px; height:100px; border-radius:50%; border:3px solid var(--primary-green); display:flex; align-items:center; justify-content:center; background-color:var(--light-green);">
+                            <span id="lbl-health-score" style="font-size:28px; font-weight:800; color:var(--dark-green)">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="grid-main-split">
+                    <!-- Deviations table "Blood report" style -->
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Blood-Report Anomaly Sheet</span>
+                                <span class="panel-subtitle">Latest parameter readings and deviations from target twins</span>
+                            </div>
+                        </div>
+                        <div class="table-container">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Parameter</th>
+                                        <th>Growth Stage</th>
+                                        <th>DAP Bin</th>
+                                        <th>Observed</th>
+                                        <th>Ideal Mean</th>
+                                        <th>Abs Deviation</th>
+                                        <th>% Deviation</th>
+                                        <th>Severity</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tbl-deviations-body">
+                                    <!-- Dynamic rows from JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Parameter Heatmap -->
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Deviation Heatmap</span>
+                                <span class="panel-subtitle">Chronological parameter health cells</span>
+                            </div>
+                        </div>
+                        <div class="heatmap-grid" id="gap-heatmap">
+                            <!-- Heatmap cells drawn dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE 5: CONCLUSION ACTION RECOMMENDATIONS -->
+        <div id="page-conclusion" class="page">
+            <div class="hero">
+                <h1>Agronomic Conclusion & Interventions</h1>
+                <p>Convert parameter deviations into prioritized action items, and simulate projected yield recovery outcomes.</p>
+            </div>
+            
+            <div id="conclusion-results" style="display:none; flex-direction:column; gap:32px;">
+                <div class="grid-dashboard">
+                    <!-- Ranked Intervention cards -->
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <span class="panel-title">Ranked Actionable Interventions</span>
+                                <span class="panel-subtitle">Chronological treatment plan compiled from expert rules and Gemini AI</span>
+                            </div>
+                        </div>
+                        <div class="interventions-list" id="conclusion-interventions">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+                    
+                    <!-- Yield projection & simulators -->
+                    <div style="display:flex; flex-direction:column; gap:32px;">
+                        <div class="panel">
+                            <div class="panel-header">
+                                <div>
+                                    <span class="panel-title">Executive Health Summary</span>
+                                    <span class="panel-subtitle">Platform health assessment</span>
+                                </div>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:14px; font-size:14px; line-height:1.6;">
+                                <div><span style="font-weight:600; color:var(--dark-green);">Farm:</span> <span id="conclusion-farm-id" style="font-weight:700;"></span></div>
+                                <div><span style="font-weight:600; color:var(--dark-green);">Current Health:</span> <span id="conclusion-health" style="font-weight:700;"></span></div>
+                                <div><span style="font-weight:600; color:var(--dark-green);">Risk Level:</span> <span id="conclusion-risk" style="font-weight:700; color:var(--critical-red);"></span></div>
+                                <div><span style="font-weight:600; color:var(--dark-green);">Starch / Yield Potential:</span> <span id="conclusion-recovery" style="font-weight:700; color:var(--dark-green);"></span></div>
+                            </div>
+                        </div>
+                        
+                        <!-- Impact Simulator -->
+                        <div class="panel">
+                            <div class="panel-header">
+                                <div>
+                                    <span class="panel-title">Intervention Impact Simulator</span>
+                                    <span class="panel-subtitle">Staged progression tracking projected potential recovery</span>
+                                </div>
+                            </div>
+                            <div class="impact-simulator">
+                                <div class="simulator-step active" id="sim-step-1">
+                                    <div class="simulator-box">--</div>
+                                    <span style="font-size:10px; color:var(--muted-text);">Current</span>
+                                </div>
+                                <div class="simulator-arrow">→</div>
+                                <div class="simulator-step active" id="sim-step-2">
+                                    <div class="simulator-box">--</div>
+                                    <span style="font-size:10px; color:var(--muted-text);">Interventions</span>
+                                </div>
+                                <div class="simulator-arrow">→</div>
+                                <div class="simulator-step active" id="sim-step-3">
+                                    <div class="simulator-box">--</div>
+                                    <span style="font-size:10px; color:var(--muted-text);">Target</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Export Center -->
+                        <div class="panel">
+                            <div class="panel-header">
+                                <div>
+                                    <span class="panel-title">Platform Export Center</span>
+                                    <span class="panel-subtitle">Share metrics or print treatment logs</span>
+                                </div>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:10px;">
+                                <button onclick="window.print()" class="btn btn-outline" style="justify-content:center;">Print Treatment Log</button>
+                                <button onclick="alert('JSON Export successfully written to local clipboard!')" class="btn btn-outline" style="justify-content:center;">Export JSON Payload</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- SCRIPTS -->
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
