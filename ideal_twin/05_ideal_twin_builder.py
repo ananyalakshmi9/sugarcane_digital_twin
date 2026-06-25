@@ -11,7 +11,7 @@ def build_ideal_twin(input_path, output_dir):
     
     os.makedirs(output_dir, exist_ok=True)
     
-    indices = ["NDVI", "NDRE", "NDWI", "EVI", "MSAVI", "VH_VV", "temperature_2m", "total_precipitation_sum", "relative_humidity", "wind_speed_10m"]
+    indices = ["NDVI", "NDRE", "NDWI", "EVI", "MSAVI", "VH_VV", "temperature_2m", "total_precipitation_sum", "relative_humidity", "wind_speed_10m", "LST"]
     
     for variety, stratum_df in df.groupby('variety'):
         # Best Method: Apply biological DAP caps to slice off ratoon seasons.

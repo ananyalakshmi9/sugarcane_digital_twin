@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sugarcane Digital Twin Platform</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
     <!-- LEFT NAVIGATION RAIL -->
@@ -220,6 +222,8 @@
                     </div>
 
                     <div style="font-weight:700; font-size:14px; color:var(--dark-green); border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:4px;">2. Location Centroid & Acreage</div>
+                    <div id="raw-map" style="height:400px; border-radius:8px; margin-bottom:6px; border:1px solid var(--border);"></div>
+                    <button type="button" class="btn btn-secondary" onclick="clearRawMap()" style="padding:6px 12px; font-size:11px; margin-bottom:12px; background:var(--section-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer;">Clear Drawn Boundary</button>
                     <div class="grid-3">
                         <div class="form-group">
                             <label>Latitude Centroid</label>
@@ -406,7 +410,13 @@
                     <form class="form-section" id="form-live-pull" onsubmit="pullLiveDetails(event)" style="display:flex; flex-direction:column; gap:16px;">
                         <div class="form-group">
                             <label>Farm ID / Name</label>
-                            <input type="text" id="pull-farm-id" required placeholder="e.g. test_farm_8005">
+                            <div class="search-select-container" id="pull-farm-select-container">
+                                <input type="text" id="pull-farm-id-input" required placeholder="Type to search farm..." onfocus="showOptions('pull-farm')" oninput="filterOptions('pull-farm')">
+                                <input type="hidden" id="pull-farm-id">
+                                <div class="search-select-options" id="pull-farm-select-opts">
+                                    <!-- Populated dynamically in js -->
+                                </div>
+                            </div>
                         </div>
                         <div class="form-grid">
                             <div class="form-group">
@@ -451,15 +461,8 @@
                                 <span class="panel-subtitle">Circular buffer projection matching acreage</span>
                             </div>
                         </div>
-                        <div style="height:200px; display:flex; align-items:center; justify-content:center; background-color:var(--section-bg); border:1px solid var(--border); border-radius:var(--radius-sm);">
-                            <svg viewBox="0 0 100 100" width="120" height="120">
-                                <rect x="5" y="5" width="90" height="90" fill="none" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 2" />
-                                <circle cx="50" cy="50" r="30" fill="var(--light-green)" opacity="0.3" stroke="var(--primary-green)" stroke-width="2" />
-                                <circle cx="50" cy="50" r="2" fill="var(--dark-green)" />
-                                <line x1="50" y1="50" x2="80" y2="50" stroke="var(--dark-green)" stroke-width="1" stroke-dasharray="2 2" />
-                                <text x="65" y="44" font-size="6" fill="var(--dark-green)" font-weight="700">Radius</text>
-                            </svg>
-                        </div>
+                        <div id="pull-map" style="height:400px; border-radius:8px; border:1px solid var(--border);"></div>
+                        <button type="button" class="btn btn-secondary" onclick="clearPullMap()" style="padding:6px 12px; font-size:11px; margin-top:8px; background:var(--section-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer;">Clear Drawn Boundary</button>
                     </div>
                     
                     <!-- Logs removed from UI as requested -->
@@ -570,6 +573,7 @@
                             <div><span style="font-weight:600; color:var(--dark-green);">Current DAP:</span> <span id="lbl-current-dap"></span></div>
                             <div><span style="font-weight:600; color:var(--dark-green);">Last Observation Date:</span> <span id="lbl-last-obs"></span></div>
                             <div><span style="font-weight:600; color:var(--dark-green);">Active Growth Stage:</span> <span id="lbl-growth-stage"></span></div>
+                            <div><span style="font-weight:600; color:var(--dark-green);">Predicted Brix (Sugar Content):</span> <span id="lbl-predicted-brix" style="font-weight:700; color:var(--primary-green);">--</span></div>
                         </div>
                     </div>
                     
@@ -666,6 +670,19 @@
                                 <div><span style="font-weight:600; color:var(--dark-green);">Starch / Yield Potential:</span> <span id="conclusion-recovery" style="font-weight:700; color:var(--dark-green);"></span></div>
                             </div>
                         </div>
+
+                        <!-- Yield Projections & Loss Calculator Panel -->
+                        <div class="panel" id="yield-calculator-panel">
+                            <div class="panel-header">
+                                <div>
+                                    <span class="panel-title">Yield Projection & Recovery Calculator</span>
+                                    <span class="panel-subtitle">Dynamic yield estimation based on recommendations execution</span>
+                                </div>
+                            </div>
+                            <div id="yield-calculator-content" style="display:flex; flex-direction:column; gap:16px;">
+                                <!-- Will be rendered dynamically via JS -->
+                            </div>
+                        </div>
                         
                         <!-- Impact Simulator -->
                         <div class="panel">
@@ -703,7 +720,7 @@
                             </div>
                             <div style="display:flex; flex-direction:column; gap:10px;">
                                 <button onclick="window.print()" class="btn btn-outline" style="justify-content:center;">Print Treatment Log</button>
-                                <button onclick="alert('JSON Export successfully written to local clipboard!')" class="btn btn-outline" style="justify-content:center;">Export JSON Payload</button>
+                                <button onclick="exportJsonPayload()" class="btn btn-outline" style="justify-content:center;">Export JSON Payload</button>
                             </div>
                         </div>
                     </div>
@@ -713,6 +730,6 @@
     </main>
 
     <!-- SCRIPTS -->
-    <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/dashboard.js?v=1.2"></script>
 </body>
 </html>

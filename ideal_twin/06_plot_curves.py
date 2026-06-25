@@ -82,6 +82,12 @@ INDEX_META = {
         "ylabel": "Wind Speed (m/s)",
         "color": "#6B7280", # Cool Grey
         "type": "weather"
+    },
+    "LST": {
+        "title": "Land Surface Temperature",
+        "ylabel": "LST (°C)",
+        "color": "#DC2626", # Red
+        "type": "weather"
     }
 }
 
@@ -323,8 +329,8 @@ def plot_dashboards(twins):
         # Determine crop duration
         max_dap = 540 if variety == 'CO_265' else 420
         
-        # Setup 5x2 grid
-        fig, axes = plt.subplots(nrows=5, ncols=2, figsize=(15, 20), dpi=120)
+        # Setup 6x2 grid
+        fig, axes = plt.subplots(nrows=6, ncols=2, figsize=(15, 24), dpi=120)
         axes = axes.flatten()
         
         # Set main figure title
@@ -386,6 +392,10 @@ def plot_dashboards(twins):
             
             # Apply styling
             style_axes(ax, idx_name, title=idx_meta['title'], ylabel=idx_meta['ylabel'])
+            
+        # Hide any unused subplots
+        for j in range(len(INDEX_META), len(axes)):
+            axes[j].axis('off')
             
         # Adjust layout and save
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])

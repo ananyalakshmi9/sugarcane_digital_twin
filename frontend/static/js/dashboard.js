@@ -1,6 +1,18 @@
 // Sugarcane Digital Twin Platform — Dashboard Script
 let varietiesList = [];
 let farmsList = [];
+let pullMap = null;
+let pullCircle = null;
+let pullPolygon = null;
+let pullMarker = null;
+let pullVertices = [];
+let pullPointMarkers = [];
+let rawMap = null;
+let rawMarker = null;
+let rawVertices = [];
+let rawPointMarkers = [];
+let rawPolygon = null;
+let lastAnalyzedPlan = null;
 
 // --- Page routing & tab switching ---
 function switchPage(pageId) {
@@ -31,6 +43,18 @@ function switchPage(pageId) {
         loadDashboardStats();
     } else if (pageId === 'ideal') {
         renderBaselineCurves();
+        initRawMap();
+        setTimeout(() => {
+            if (rawMap) rawMap.invalidateSize();
+        }, 100);
+    } else if (pageId === 'puller') {
+        initPullMap();
+        setTimeout(() => {
+            if (pullMap) {
+                pullMap.invalidateSize();
+                updatePullMapCircle();
+            }
+        }, 100);
     }
 }
 
@@ -40,11 +64,34 @@ window.addEventListener('DOMContentLoaded', () => {
     loadFarms();
 
     // Autocomplete/autofill for current twin extractor
-    const pullFarmIdInput = document.getElementById('pull-farm-id');
+    const pullFarmIdInput = document.getElementById('pull-farm-id-input');
     if (pullFarmIdInput) {
-        pullFarmIdInput.addEventListener('change', autoFillFarmDetails);
-        pullFarmIdInput.addEventListener('input', autoFillFarmDetails);
+        pullFarmIdInput.addEventListener('input', () => {
+            const val = pullFarmIdInput.value.trim();
+            const hiddenId = document.getElementById('pull-farm-id');
+            if (hiddenId) hiddenId.value = val;
+            if (val === '') {
+                window.lastAutofilledFarmId = '';
+            }
+            autoFillFarmDetails();
+        });
     }
+
+    const pullLat = document.getElementById('pull-lat');
+    const pullLon = document.getElementById('pull-lon');
+    const pullAcres = document.getElementById('pull-acres');
+    if (pullLat) pullLat.addEventListener('input', () => {
+        window.currentPullBoundary = null;
+        updatePullMapCircle();
+    });
+    if (pullLon) pullLon.addEventListener('input', () => {
+        window.currentPullBoundary = null;
+        updatePullMapCircle();
+    });
+    if (pullAcres) pullAcres.addEventListener('input', () => {
+        window.currentPullBoundary = null;
+        updatePullMapCircle();
+    });
 
     // Page switcher fallback
     const activePage = sessionStorage.getItem('active_page') || 'dashboard';
@@ -128,6 +175,18 @@ function loadFarms() {
                     farmOpts.appendChild(div);
                 });
             }
+
+            const pullFarmOpts = document.getElementById('pull-farm-select-opts');
+            if (pullFarmOpts) {
+                pullFarmOpts.innerHTML = '';
+                data.forEach(f => {
+                    const div = document.createElement('div');
+                    div.className = 'search-select-option';
+                    div.innerText = `Farm ${f.farm_id} (${f.farmer_name}) — ${f.variety}`;
+                    div.onclick = () => selectOption('pull-farm', f.farm_id, `Farm ${f.farm_id} (${f.farmer_name})`, f.variety);
+                    pullFarmOpts.appendChild(div);
+                });
+            }
         });
 }
 
@@ -138,6 +197,23 @@ function autoFillFarmDetails() {
     // Check if we already queried this recently to avoid double-requesting
     if (window.lastAutofilledFarmId === farmId) return;
     window.lastAutofilledFarmId = farmId;
+    
+    // Clear manual drawing state before autofill
+    pullPointMarkers.forEach(marker => {
+        if (pullMap && marker) {
+            pullMap.removeLayer(marker);
+        }
+    });
+    pullPointMarkers = [];
+    pullVertices = [];
+    if (pullPolygon && pullMap) {
+        pullMap.removeLayer(pullPolygon);
+        pullPolygon = null;
+    }
+    if (pullCircle && pullMap) {
+        pullMap.removeLayer(pullCircle);
+        pullCircle = null;
+    }
     
     fetch(`/api/farm/${encodeURIComponent(farmId)}`)
         .then(res => res.json())
@@ -154,6 +230,22 @@ function autoFillFarmDetails() {
                     document.getElementById('pull-variety-val').value = selectVal;
                     document.getElementById('pull-variety-input').value = selectVal;
                 }
+                
+                // Re-create pullMarker if it was deleted during drawing
+                if (!pullMarker && pullMap) {
+                    pullMarker = L.marker([parseFloat(data.latitude) || 20.78991, parseFloat(data.longitude) || 74.13846], { draggable: true }).addTo(pullMap);
+                    pullMarker.on('dragend', function (e) {
+                        const position = pullMarker.getLatLng();
+                        const latInput2 = document.getElementById('pull-lat');
+                        const lonInput2 = document.getElementById('pull-lon');
+                        if (latInput2) latInput2.value = parseFloat(position.lat).toFixed(5);
+                        if (lonInput2) lonInput2.value = parseFloat(position.lng).toFixed(5);
+                        updatePullMapCircle();
+                    });
+                }
+                
+                window.currentPullBoundary = data.boundary;
+                updatePullMapCircle();
             }
         })
         .catch(err => console.error('Error autofilling farm details:', err));
@@ -163,6 +255,9 @@ function autoFillFarmDetails() {
 function showOptions(type) {
     const container = document.getElementById(type + '-select-opts');
     if (container) container.style.display = 'block';
+    
+    const wrapper = document.getElementById(type + '-select-container');
+    if (wrapper) wrapper.style.zIndex = '1100';
 }
 
 // Close list options on outside clicks
@@ -171,17 +266,34 @@ document.addEventListener('click', (e) => {
     if (varCont && !varCont.contains(e.target)) {
         const opts = document.getElementById('variety-select-opts');
         if (opts) opts.style.display = 'none';
+        varCont.style.zIndex = '';
     }
 
     const farmCont = document.getElementById('farm-select-container');
     if (farmCont && !farmCont.contains(e.target)) {
         const opts = document.getElementById('farm-select-opts');
         if (opts) opts.style.display = 'none';
+        farmCont.style.zIndex = '';
+    }
+
+    const pullFarmCont = document.getElementById('pull-farm-select-container');
+    if (pullFarmCont && !pullFarmCont.contains(e.target)) {
+        const opts = document.getElementById('pull-farm-select-opts');
+        if (opts) opts.style.display = 'none';
+        pullFarmCont.style.zIndex = '';
     }
 });
 
 function filterOptions(type) {
-    const input = document.getElementById(type === 'variety' ? 'pull-variety-input' : 'analyze-farm-input');
+    let inputId = '';
+    if (type === 'variety') {
+        inputId = 'pull-variety-input';
+    } else if (type === 'farm') {
+        inputId = 'analyze-farm-input';
+    } else if (type === 'pull-farm') {
+        inputId = 'pull-farm-id-input';
+    }
+    const input = document.getElementById(inputId);
     const optsDiv = document.getElementById(type + '-select-opts');
     if (!input || !optsDiv) return;
 
@@ -193,6 +305,9 @@ function filterOptions(type) {
 }
 
 function selectOption(type, val, label, extra = null) {
+    const wrapper = document.getElementById(type + '-select-container');
+    if (wrapper) wrapper.style.zIndex = '';
+
     if (type === 'variety') {
         document.getElementById('pull-variety-input').value = label;
         document.getElementById('pull-variety-val').value = val;
@@ -202,6 +317,11 @@ function selectOption(type, val, label, extra = null) {
         document.getElementById('analyze-farm-val').value = val;
         document.getElementById('analyze-variety-val').value = extra;
         document.getElementById('farm-select-opts').style.display = 'none';
+    } else if (type === 'pull-farm') {
+        document.getElementById('pull-farm-id-input').value = label;
+        document.getElementById('pull-farm-id').value = val;
+        document.getElementById('pull-farm-select-opts').style.display = 'none';
+        autoFillFarmDetails();
     }
 }
 
@@ -245,7 +365,8 @@ function submitRawFarm(event) {
         amino_acids: document.getElementById('raw-amino-acids').value.trim(),
         special_practices: document.getElementById('raw-special-practices').value.trim(),
         brix: document.getElementById('raw-brix').value,
-        ccs: document.getElementById('raw-ccs').value
+        ccs: document.getElementById('raw-ccs').value,
+        boundary: rawVertices.length >= 3 ? rawVertices.map(v => ({ lat: v[0], lng: v[1] })) : null
     };
     
     fetch('/api/raw-farm/add', {
@@ -259,6 +380,7 @@ function submitRawFarm(event) {
         if (data.status === 'success') {
             alert(data.message);
             document.getElementById('form-add-raw-farm').reset();
+            clearRawMap();
             loadFarms(); // Reload farms dropdown list
         } else {
             alert('Error: ' + data.message);
@@ -324,7 +446,8 @@ function pullLiveDetails(e) {
         longitude: document.getElementById('pull-lon').value,
         field_area_acres: document.getElementById('pull-acres').value,
         variety: varietyVal,
-        planting_date: document.getElementById('pull-planting-date').value.trim()
+        planting_date: document.getElementById('pull-planting-date').value.trim(),
+        boundary: pullVertices.length >= 3 ? pullVertices.map(v => ({ lat: v[0], lng: v[1] })) : (window.currentPullBoundary || null)
     };
 
     fetch('/api/live-twin/pull', {
@@ -388,6 +511,8 @@ function runGapAnalysis() {
             if (data.status === 'success') {
                 document.getElementById('analysis-results').style.display = 'flex';
                 document.getElementById('conclusion-results').style.display = 'flex';
+
+                lastAnalyzedPlan = data.plan;
 
                 renderGapReport(data.plan);
                 renderConclusion(data.plan);
@@ -663,6 +788,12 @@ function runGapAnalysis() {
         const activeStage = plan.consolidated_intervention_plan[0]?.category || 'GRAND GROWTH';
         document.getElementById('lbl-growth-stage').innerText = activeStage.toUpperCase();
 
+        if (plan.predicted_brix !== undefined) {
+            document.getElementById('lbl-predicted-brix').innerText = plan.predicted_brix + "%";
+        } else {
+            document.getElementById('lbl-predicted-brix').innerText = "N/A";
+        }
+
         // Health Score
         document.getElementById('lbl-health-score').innerText = plan.overall_health_score + "%";
 
@@ -775,8 +906,84 @@ function runGapAnalysis() {
                 container.appendChild(card);
             });
         }
+        
+        // Update Yield Projections & Loss Calculator
+        const yieldCalcContent = document.getElementById('yield-calculator-content');
+        if (yieldCalcContent) {
+            const h = plan.overall_health_score !== undefined ? parseFloat(plan.overall_health_score) : 100.0;
+            const area = plan.field_area_acres ? parseFloat(plan.field_area_acres) : 1.0;
+            
+            let idealYieldPerAcre = 50.0; // Default fallback
+            if (plan.agronomic_metadata && plan.agronomic_metadata.mean_yield_per_acre) {
+                idealYieldPerAcre = parseFloat(plan.agronomic_metadata.mean_yield_per_acre);
+            }
+            
+            if (h >= 95) {
+                yieldCalcContent.innerHTML = `
+                    <div style="background:rgba(16,185,129,0.04); border:1px solid rgba(16,185,129,0.2); padding:14px; border-radius:8px; display:flex; flex-direction:column; gap:8px;">
+                        <div style="font-weight:700; color:var(--dark-green); display:flex; align-items:center; gap:6px; font-size:14px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="stroke:var(--dark-green);"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                            Optimal Crop Performance
+                        </div>
+                        <div style="font-size:13px; color:var(--text); line-height:1.5;">
+                            The crop is performing at <strong>${h.toFixed(1)}%</strong> of its ideal twin benchmark potential. No yield penalties are projected.
+                        </div>
+                        <div style="margin-top:4px; font-size:12px; font-family:var(--font-mono); color:var(--muted-text); background:rgba(0,0,0,0.03); padding:6px 10px; border-radius:4px; align-self:flex-start; border:1px solid var(--border);">
+                            Ideal Yield: ${idealYieldPerAcre.toFixed(1)} tons / acre
+                        </div>
+                    </div>
+                `;
+            } else {
+                const idealTotal = idealYieldPerAcre * area;
+                
+                const noActionPerAcre = idealYieldPerAcre * (h / 100.0);
+                const noActionTotal = noActionPerAcre * area;
+                
+                // Recovery is 75% of the gap
+                const actionPerAcre = idealYieldPerAcre * ((h + 0.75 * (100.0 - h)) / 100.0);
+                const actionTotal = actionPerAcre * area;
+                
+                const savedPerAcre = actionPerAcre - noActionPerAcre;
+                const savedTotal = actionTotal - noActionTotal;
+                
+                yieldCalcContent.innerHTML = `
+                    <div style="display:flex; flex-direction:column; gap:12px; font-size:13px;">
+                        <!-- Comparison Cards -->
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                            <!-- No Action Card -->
+                            <div style="border:1px solid rgba(220,38,38,0.15); background:rgba(220,38,38,0.02); padding:12px; border-radius:8px; display:flex; flex-direction:column; gap:4px;">
+                                <div style="font-size:10px; font-weight:700; color:var(--critical-red); text-transform:uppercase; letter-spacing:0.5px;">Ignored Advice</div>
+                                <div style="font-size:18px; font-weight:800; color:var(--critical-red); font-family:var(--font-mono);">${noActionPerAcre.toFixed(1)} <span style="font-size:12px; font-weight:600;">t/ac</span></div>
+                                <div style="font-size:11px; color:var(--muted-text); font-family:var(--font-mono);">${noActionTotal.toFixed(1)} t total (${area.toFixed(1)} ac)</div>
+                            </div>
+                            
+                            <!-- Follow Recommendations Card -->
+                            <div style="border:1px solid rgba(16,185,129,0.25); background:rgba(16,185,129,0.02); padding:12px; border-radius:8px; display:flex; flex-direction:column; gap:4px;">
+                                <div style="font-size:10px; font-weight:700; color:var(--dark-green); text-transform:uppercase; letter-spacing:0.5px;">Followed Advice</div>
+                                <div style="font-size:18px; font-weight:800; color:var(--dark-green); font-family:var(--font-mono);">${actionPerAcre.toFixed(1)} <span style="font-size:12px; font-weight:600;">t/ac</span></div>
+                                <div style="font-size:11px; color:var(--muted-text); font-family:var(--font-mono);">${actionTotal.toFixed(1)} t total (${area.toFixed(1)} ac)</div>
+                            </div>
+                        </div>
 
-        // Update Impact Simulator
+                        <!-- Summary Benefit Alert -->
+                        <div style="border:1px solid rgba(245,158,11,0.25); background:rgba(245,158,11,0.03); padding:12px; border-radius:8px; display:flex; flex-direction:column; gap:6px;">
+                            <div style="font-weight:700; color:#D97706; display:flex; align-items:center; gap:6px; font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="stroke:#D97706;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                                Net Yield Loss Avoided
+                            </div>
+                            <div style="font-size:13px; line-height:1.4; color:var(--text);">
+                                By executing recommendations, you save <strong style="color:#D97706; font-family:var(--font-mono); font-size:14px;">${savedPerAcre.toFixed(1)} tons / acre</strong>, preventing a loss of <strong style="color:#D97706; font-family:var(--font-mono); font-size:14px;">${savedTotal.toFixed(1)} tons</strong> across your field.
+                            </div>
+                        </div>
+
+                        <!-- Technical Reference -->
+                        <div style="font-size:11px; color:var(--muted-text); line-height:1.4; border-top:1px solid var(--border); padding-top:10px; display:flex; justify-content:space-between;">
+                            <span>Variety Baseline: <strong>${idealYieldPerAcre.toFixed(1)} t/ac</strong></span>
+                            <span>Target Recovery: <strong>75%</strong></span>
+                        </div>
+                    </div>
+                `;
+            }        // Update Impact Simulator
         const simSteps = [
             document.getElementById('sim-step-1'),
             document.getElementById('sim-step-2'),
@@ -792,3 +999,353 @@ function runGapAnalysis() {
             simSteps[2].innerHTML = `<div class="simulator-box">${val3}%</div><div style="font-size:10px; color:var(--muted-text); font-weight:600;">Target Twins</div>`;
         }
     }
+}
+
+// --- Leaflet.js Mapping Helpers ---
+function addTileLayers(mapObj) {
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+    });
+    
+    const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: 'Tiles &copy; Esri'
+    });
+
+    const googleHybrid = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+        maxZoom: 19,
+        attribution: 'Map data &copy; Google'
+    });
+    
+    const baseMaps = {
+        "Google Satellite (Hybrid)": googleHybrid,
+        "Esri Satellite": esriSatellite,
+        "Street Map (OSM)": osm
+    };
+    
+    googleHybrid.addTo(mapObj);
+    L.control.layers(baseMaps).addTo(mapObj);
+}
+
+function initPullMap() {
+    if (pullMap) return;
+    const mapDiv = document.getElementById('pull-map');
+    if (!mapDiv) return;
+    
+    pullMap = L.map('pull-map').setView([20.78991, 74.13846], 15);
+    addTileLayers(pullMap);
+    
+    pullMarker = L.marker([20.78991, 74.13846], { draggable: true }).addTo(pullMap);
+    
+    function updateCoords(lat, lng) {
+        const latInput = document.getElementById('pull-lat');
+        const lonInput = document.getElementById('pull-lon');
+        if (latInput) latInput.value = parseFloat(lat).toFixed(5);
+        if (lonInput) lonInput.value = parseFloat(lng).toFixed(5);
+        updatePullMapCircle();
+    }
+    
+    pullMarker.on('dragend', function (e) {
+        const position = pullMarker.getLatLng();
+        updateCoords(position.lat, position.lng);
+    });
+    
+    pullMap.on('click', function (e) {
+        addPullVertex(e.latlng.lat, e.latlng.lng);
+    });
+}
+
+function updateCentroidFromPullVertices() {
+    if (pullVertices.length === 0) return;
+    let sumLat = 0;
+    let sumLng = 0;
+    for (let i = 0; i < pullVertices.length; i++) {
+        sumLat += pullVertices[i][0];
+        sumLng += pullVertices[i][1];
+    }
+    const avgLat = sumLat / pullVertices.length;
+    const avgLng = sumLng / pullVertices.length;
+    
+    const latInput = document.getElementById('pull-lat');
+    const lonInput = document.getElementById('pull-lon');
+    if (latInput) latInput.value = parseFloat(avgLat).toFixed(5);
+    if (lonInput) lonInput.value = parseFloat(avgLng).toFixed(5);
+}
+
+function addPullVertex(lat, lng) {
+    if (pullMarker) {
+        pullMap.removeLayer(pullMarker);
+        pullMarker = null;
+    }
+    
+    window.currentPullBoundary = null;
+    pullVertices.push([lat, lng]);
+    
+    const marker = L.circleMarker([lat, lng], {
+        radius: 5,
+        color: '#2e7d32',
+        fillColor: '#81c784',
+        fillOpacity: 1
+    }).addTo(pullMap);
+    pullPointMarkers.push(marker);
+    
+    if (pullPolygon) {
+        pullMap.removeLayer(pullPolygon);
+    }
+    if (pullCircle) {
+        pullMap.removeLayer(pullCircle);
+        pullCircle = null;
+    }
+    
+    if (pullVertices.length >= 3) {
+        pullPolygon = L.polygon(pullVertices, {
+            color: '#2e7d32',
+            fillColor: '#81c784',
+            fillOpacity: 0.3
+        }).addTo(pullMap);
+    } else if (pullVertices.length === 2) {
+        pullPolygon = L.polyline(pullVertices, {
+            color: '#2e7d32'
+        }).addTo(pullMap);
+    }
+    
+    updateCentroidFromPullVertices();
+}
+
+function clearPullMap() {
+    pullPointMarkers.forEach(marker => {
+        if (pullMap && marker) {
+            pullMap.removeLayer(marker);
+        }
+    });
+    pullPointMarkers = [];
+    
+    if (pullPolygon && pullMap) {
+        pullMap.removeLayer(pullPolygon);
+    }
+    pullPolygon = null;
+    
+    if (pullCircle && pullMap) {
+        pullMap.removeLayer(pullCircle);
+    }
+    pullCircle = null;
+    
+    pullVertices = [];
+    window.currentPullBoundary = null;
+    
+    if (!pullMarker && pullMap) {
+        const center = pullMap.getCenter();
+        pullMarker = L.marker(center, { draggable: true }).addTo(pullMap);
+        
+        const latInput = document.getElementById('pull-lat');
+        const lonInput = document.getElementById('pull-lon');
+        if (latInput) latInput.value = parseFloat(center.lat).toFixed(5);
+        if (lonInput) lonInput.value = parseFloat(center.lng).toFixed(5);
+        
+        pullMarker.on('dragend', function (e) {
+            const position = pullMarker.getLatLng();
+            const latInput2 = document.getElementById('pull-lat');
+            const lonInput2 = document.getElementById('pull-lon');
+            if (latInput2) latInput2.value = parseFloat(position.lat).toFixed(5);
+            if (lonInput2) lonInput2.value = parseFloat(position.lng).toFixed(5);
+            updatePullMapCircle();
+        });
+        
+        updatePullMapCircle();
+    }
+}
+
+window.clearPullMap = clearPullMap;
+
+function initRawMap() {
+    if (rawMap) return;
+    const mapDiv = document.getElementById('raw-map');
+    if (!mapDiv) return;
+    
+    rawMap = L.map('raw-map').setView([20.78991, 74.13846], 15);
+    addTileLayers(rawMap);
+    
+    rawMarker = L.marker([20.78991, 74.13846], { draggable: true }).addTo(rawMap);
+    
+    function updateCoords(lat, lng) {
+        const latInput = document.getElementById('raw-lat');
+        const lonInput = document.getElementById('raw-lon');
+        if (latInput) latInput.value = parseFloat(lat).toFixed(5);
+        if (lonInput) lonInput.value = parseFloat(lng).toFixed(5);
+    }
+    
+    rawMarker.on('dragend', function (e) {
+        const position = rawMarker.getLatLng();
+        updateCoords(position.lat, position.lng);
+    });
+    
+    rawMap.on('click', function (e) {
+        addRawVertex(e.latlng.lat, e.latlng.lng);
+    });
+}
+
+function updateCentroidFromVertices() {
+    if (rawVertices.length === 0) return;
+    let sumLat = 0;
+    let sumLng = 0;
+    for (let i = 0; i < rawVertices.length; i++) {
+        sumLat += rawVertices[i][0];
+        sumLng += rawVertices[i][1];
+    }
+    const avgLat = sumLat / rawVertices.length;
+    const avgLng = sumLng / rawVertices.length;
+    
+    const latInput = document.getElementById('raw-lat');
+    const lonInput = document.getElementById('raw-lon');
+    if (latInput) latInput.value = parseFloat(avgLat).toFixed(5);
+    if (lonInput) lonInput.value = parseFloat(avgLng).toFixed(5);
+}
+
+function addRawVertex(lat, lng) {
+    if (rawMarker) {
+        rawMap.removeLayer(rawMarker);
+        rawMarker = null;
+    }
+    
+    rawVertices.push([lat, lng]);
+    
+    const marker = L.circleMarker([lat, lng], {
+        radius: 5,
+        color: '#2e7d32',
+        fillColor: '#81c784',
+        fillOpacity: 1
+    }).addTo(rawMap);
+    rawPointMarkers.push(marker);
+    
+    if (rawPolygon) {
+        rawMap.removeLayer(rawPolygon);
+    }
+    if (rawVertices.length >= 3) {
+        rawPolygon = L.polygon(rawVertices, {
+            color: '#2e7d32',
+            fillColor: '#81c784',
+            fillOpacity: 0.3
+        }).addTo(rawMap);
+    } else if (rawVertices.length === 2) {
+        rawPolygon = L.polyline(rawVertices, {
+            color: '#2e7d32'
+        }).addTo(rawMap);
+    }
+    
+    updateCentroidFromVertices();
+}
+
+function clearRawMap() {
+    rawPointMarkers.forEach(marker => {
+        if (rawMap && marker) {
+            rawMap.removeLayer(marker);
+        }
+    });
+    rawPointMarkers = [];
+    
+    if (rawPolygon && rawMap) {
+        rawMap.removeLayer(rawPolygon);
+    }
+    rawPolygon = null;
+    
+    rawVertices = [];
+    
+    if (!rawMarker && rawMap) {
+        const center = rawMap.getCenter();
+        rawMarker = L.marker(center, { draggable: true }).addTo(rawMap);
+        
+        const latInput = document.getElementById('raw-lat');
+        const lonInput = document.getElementById('raw-lon');
+        if (latInput) latInput.value = parseFloat(center.lat).toFixed(5);
+        if (lonInput) lonInput.value = parseFloat(center.lng).toFixed(5);
+        
+        rawMarker.on('dragend', function (e) {
+            const position = rawMarker.getLatLng();
+            const latInput2 = document.getElementById('raw-lat');
+            const lonInput2 = document.getElementById('raw-lon');
+            if (latInput2) latInput2.value = parseFloat(position.lat).toFixed(5);
+            if (lonInput2) lonInput2.value = parseFloat(position.lng).toFixed(5);
+        });
+    }
+}
+
+window.clearRawMap = clearRawMap;
+
+function updatePullMapCircle() {
+    if (!pullMap) return;
+    
+    const latVal = document.getElementById('pull-lat').value;
+    const lonVal = document.getElementById('pull-lon').value;
+    const acresVal = document.getElementById('pull-acres').value;
+    
+    const lat = parseFloat(latVal);
+    const lon = parseFloat(lonVal);
+    const acres = parseFloat(acresVal) || 1.0;
+    
+    if (isNaN(lat) || isNaN(lon)) return;
+    
+    pullMap.setView([lat, lon], 15);
+    
+    if (pullMarker) {
+        pullMarker.setLatLng([lat, lon]);
+    }
+    
+    if (pullCircle) {
+        pullMap.removeLayer(pullCircle);
+        pullCircle = null;
+    }
+    if (pullPolygon) {
+        pullMap.removeLayer(pullPolygon);
+        pullPolygon = null;
+    }
+    
+    if (pullVertices.length >= 3) {
+        pullPolygon = L.polygon(pullVertices, {
+            color: '#2e7d32',
+            fillColor: '#81c784',
+            fillOpacity: 0.3
+        }).addTo(pullMap);
+    } else if (window.currentPullBoundary && window.currentPullBoundary.length >= 3) {
+        const latLngs = window.currentPullBoundary.map(pt => [pt.lat, pt.lng]);
+        pullPolygon = L.polygon(latLngs, {
+            color: '#2e7d32',
+            fillColor: '#81c784',
+            fillOpacity: 0.3
+        }).addTo(pullMap);
+    } else {
+        const area_sq_m = acres * 4046.85642;
+        const radius = Math.sqrt(area_sq_m / Math.PI);
+        pullCircle = L.circle([lat, lon], {
+            color: '#2e7d32',
+            fillColor: '#81c784',
+            fillOpacity: 0.3,
+            radius: radius
+        }).addTo(pullMap);
+    }
+}
+
+// Function to export and download the last analyzed farm's JSON payload as a file
+function exportJsonPayload() {
+    if (!lastAnalyzedPlan) {
+        alert("No farm analysis has been executed yet. Run an analysis first to export the payload.");
+        return;
+    }
+    
+    try {
+        const jsonStr = JSON.stringify(lastAnalyzedPlan, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `farm_${lastAnalyzedPlan.farm_id}_analysis_payload.json`;
+        document.body.appendChild(a);
+        a.click();
+        
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert("Failed to export JSON payload. Details: " + err.toString());
+    }
+}

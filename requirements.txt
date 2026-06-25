@@ -1,0 +1,12 @@
+pandas
+numpy
+openpyxl
+scipy
+requests
+python-dotenv
+flask
+gunicorn
+google-genai
+earthengine-api
+matplotlib
+scikit-learn

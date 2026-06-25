@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import argparse
+import copy
 
 # Mapping of intervention categories, keywords, and standard rule-based texts
 CATEGORIES = {
@@ -102,7 +103,7 @@ def find_max_consecutive_red(bins, key="severity", target="RED", condition_fn=No
             current_run = 0
     return max_run
 
-def check_rules(report):
+def check_rules(report, local_categories):
     """Run all primary and extra mid-season rules against the gap report."""
     deviations = report.get("deviations", {})
     current_dap = int(report.get("current_dap", 0))
@@ -112,28 +113,100 @@ def check_rules(report):
     triggered_rules = []
     triggered_categories = set()
     
-    # --- Rule 1: NDVI RED >= 2 in vegetative stage (DAP <= 90) ---
-    ndvi_bins = deviations.get("NDVI", [])
-    veg_ndvi_bins = [b for b in ndvi_bins if b.get("dap_bin", 999) <= 90]
-    if find_max_consecutive_red(veg_ndvi_bins) >= 2:
-        triggered_rules.append("NDVI RED >= 2 consecutive bins in vegetative stage (pest/disease scouting)")
+    # Extract actual nutrients from report
+    actual = report.get("actual_nutrients", {"N": 0.0, "P": 0.0, "K": 0.0})
+    n_actual = float(actual.get("N", 0.0))
+    p_actual = float(actual.get("P", 0.0))
+    k_actual = float(actual.get("K", 0.0))
+    
+    # Extract ideal baseline totals from metadata
+    meta = report.get("agronomic_metadata", {})
+    n_ideal_total = float(meta.get("mean_n_kg_per_acre", 100.0))
+    p_ideal_total = float(meta.get("mean_p_kg_per_acre", 60.0))
+    k_ideal_total = float(meta.get("mean_k_kg_per_acre", 60.0))
+    if n_ideal_total <= 0: n_ideal_total = 100.0
+    if p_ideal_total <= 0: p_ideal_total = 60.0
+    if k_ideal_total <= 0: k_ideal_total = 60.0
+    
+    # Expected fractions by DAP
+    # N Split Schedule (10% basal, 40% tillering (DAP 45-60), 40% earthing-up (DAP 120-150), 10% late vegetative)
+    if current_dap <= 45:
+        n_fraction = 0.10
+    elif current_dap <= 120:
+        n_fraction = 0.50
+    elif current_dap <= 150:
+        n_fraction = 0.90
+    else:
+        n_fraction = 1.00
+
+    # P Split Schedule (50% basal, 50% tillering (DAP 60))
+    if current_dap <= 60:
+        p_fraction = 0.50
+    else:
+        p_fraction = 1.00
+
+    # K Split Schedule (50% basal, 50% earthing-up (DAP 120))
+    if current_dap <= 120:
+        k_fraction = 0.50
+    else:
+        k_fraction = 1.00
+
+    n_expected = n_ideal_total * n_fraction
+    p_expected = p_ideal_total * p_fraction
+    k_expected = k_ideal_total * k_fraction
+    
+    # --- Rule 1: NDVI / MSAVI (Pest / ESB scouting) ---
+    msavi_bins = deviations.get("MSAVI", [])
+    tillering_msavi = [b for b in msavi_bins if 31 <= b.get("dap_bin", 999) <= 120]
+    consec_msavi_stress = find_max_consecutive_red(tillering_msavi, key="severity", target="RED") + \
+                          find_max_consecutive_red(tillering_msavi, key="severity", target="YELLOW")
+                          
+    ndwi_bins = deviations.get("NDWI", [])
+    consec_ndwi_red = find_max_consecutive_red(ndwi_bins, key="severity", target="RED")
+    
+    if 31 <= current_dap <= 120 and consec_msavi_stress >= 2 and consec_ndwi_red == 0:
+        local_categories["pest_scouting"]["rule_text"]["intervention"] = "Urgent: Probable Early Shoot Borer (ESB) infestation detected. Check for 'dead hearts' in young tillers and apply recommended biological control (Trichogramma cards) or chemical inputs immediately."
+        local_categories["pest_scouting"]["rule_text"]["urgency"] = "immediate"
+        local_categories["pest_scouting"]["rule_text"]["timing"] = "immediate"
+        triggered_rules.append("MSAVI stress with healthy NDWI during tillering (potential Early Shoot Borer infestation)")
         triggered_categories.add("pest_scouting")
+    else:
+        ndvi_bins = deviations.get("NDVI", [])
+        veg_ndvi_bins = [b for b in ndvi_bins if b.get("dap_bin", 999) <= 90]
+        if find_max_consecutive_red(veg_ndvi_bins) >= 2:
+            triggered_rules.append("NDVI RED >= 2 consecutive bins in vegetative stage (pest/disease scouting)")
+            triggered_categories.add("pest_scouting")
         
-    # --- Rule 2: N applied below 70% of ideal_N at DAP 75 ---
-    # Load Ideal Twin to get mean_n if possible
-    # For test run, since we assume fertilizer details are not in observations, n_applied defaults to 0
-    # Trigger urea topdress if DAP >= 75 and N applied is low
-    if current_dap >= 75:
-        triggered_rules.append("N applied below 70% of ideal_N at DAP 75 (topdress urea)")
-        triggered_categories.add("nitrogen")
+    # --- Rule 2: N applied below 70% of split-dose expected N at current DAP ---
+    ndre_bins = deviations.get("NDRE", [])
+    ndre_stress_veg_gg = any(
+        b.get("growth_stage") in ["Vegetative Stage", "Tillering", "Grand Growth"] and b.get("severity") in ["RED", "YELLOW"]
+        for b in ndre_bins
+    )
+    if current_dap >= 31:
+        if n_actual < 0.70 * n_expected:
+            triggered_rules.append(f"Cumulative Nitrogen applied ({n_actual:.1f} kg/ac) is below 70% of split-dose threshold for DAP {current_dap} ({n_expected:.1f} kg/ac) (apply Urea)")
+            triggered_categories.add("nitrogen")
+        elif ndre_stress_veg_gg:
+            triggered_rules.append("Low NDRE chlorophyll index indicates Nitrogen deficiency stress (apply Urea/foliar spray)")
+            triggered_categories.add("nitrogen")
         
-    # --- Rule 3: K applied below 70% of ideal_K in grand growth (DAP >= 91) ---
+    # --- Rule 3: K applied below 70% of split-dose expected K at current DAP ---
     if current_dap >= 91:
-        triggered_rules.append("K applied below 70% of ideal_K in grand growth (apply MOP)")
-        triggered_categories.add("potash")
+        if k_actual < 0.70 * k_expected:
+            triggered_rules.append(f"Cumulative Potassium applied ({k_actual:.1f} kg/ac) is below 70% of split-dose threshold for DAP {current_dap} ({k_expected:.1f} kg/ac) (apply MOP)")
+            triggered_categories.add("potash")
+            
+    # --- Rule 3b (New): P applied below 70% of split-dose expected P at current DAP (establishment alert) ---
+    if current_dap <= 90:
+        if p_actual < 0.70 * p_expected:
+            local_categories["establishment"]["rule_text"]["intervention"] = f"Cumulative Phosphorus applied ({p_actual:.1f} kg/ac) is below 70% of split-dose threshold ({p_expected:.1f} kg/ac). Apply Single Super Phosphate (SSP) to correct deficiency and promote root establishment."
+            local_categories["establishment"]["rule_text"]["urgency"] = "immediate"
+            local_categories["establishment"]["rule_text"]["timing"] = "immediate"
+            triggered_rules.append(f"Cumulative Phosphorus applied is below 70% of split-dose threshold for DAP {current_dap} (apply SSP)")
+            triggered_categories.add("establishment")
         
     # --- Rule 4: LSWI (NDWI) RED >= 3 consecutive bins ---
-    ndwi_bins = deviations.get("NDWI", [])
     if find_max_consecutive_red(ndwi_bins) >= 3:
         triggered_rules.append("LSWI (NDWI) RED >= 3 consecutive bins (water stress, check irrigation)")
         triggered_categories.add("irrigation")
@@ -144,7 +217,8 @@ def check_rules(report):
     for b in sar_bins:
         if b.get("growth_stage") == "Grand Growth":
             # Anomaly > 2σ above ideal means RED severity and positive absolute deviation
-            if b.get("severity") == "RED" and b.get("absolute_deviation", 0) > 0:
+            val = b.get("absolute_deviation")
+            if b.get("severity") == "RED" and val is not None and val > 0:
                 has_sar_anomaly = True
                 break
     if has_sar_anomaly:
@@ -160,13 +234,12 @@ def check_rules(report):
         triggered_rules.append("Precipitation near zero >= 4 consecutive bins (drought risk)")
         triggered_categories.add("drought")
         
-    # --- Rule 7: NDRE RED in grand growth ---
-    ndre_bins = deviations.get("NDRE", [])
+    # --- Rule 7: NDRE RED in grand growth (fallback/extra) ---
     has_ndre_red_gg = any(
         b.get("growth_stage") == "Grand Growth" and b.get("severity") == "RED"
         for b in ndre_bins
     )
-    if has_ndre_red_gg:
+    if has_ndre_red_gg and "nitrogen" not in triggered_categories:
         triggered_rules.append("NDRE RED in grand growth (possible nitrogen deficiency, foliar spray)")
         triggered_categories.add("nitrogen")
         
@@ -186,7 +259,7 @@ def check_rules(report):
         
     return triggered_rules, triggered_categories
 
-def classify_llm_recommendation(rec):
+def classify_llm_recommendation(rec, local_categories):
     """Determine category of an LLM recommendation based on keyword matching."""
     intervention_text = rec.get("intervention", "").lower()
     outcome_text = rec.get("expected_outcome", "").lower()
@@ -195,7 +268,7 @@ def classify_llm_recommendation(rec):
     best_category = None
     max_matches = 0
     
-    for cat_name, cat_meta in CATEGORIES.items():
+    for cat_name, cat_meta in local_categories.items():
         matches = sum(1 for kw in cat_meta["keywords"] if kw in full_text)
         if matches > max_matches:
             max_matches = matches
@@ -215,11 +288,11 @@ def get_urgency_tier(urgency_str):
     else:
         return 4
 
-def merge_recommendations(llm_recs, triggered_cats):
+def merge_recommendations(llm_recs, triggered_cats, local_categories):
     """Merge rule-based and LLM-based recommendations, deduplicating by category."""
     # Map category to lists of components
     cat_data = {}
-    for cat_name, cat_meta in CATEGORIES.items():
+    for cat_name, cat_meta in local_categories.items():
         cat_data[cat_name] = {
             "rules": [],
             "llms": [],
@@ -230,7 +303,7 @@ def merge_recommendations(llm_recs, triggered_cats):
         
     # Add rules
     for cat in triggered_cats:
-        rule_meta = CATEGORIES[cat]["rule_text"]
+        rule_meta = local_categories[cat]["rule_text"]
         cat_data[cat]["rules"].append(rule_meta["intervention"])
         cat_data[cat]["timings"].append(rule_meta["timing"])
         cat_data[cat]["urgencies"].append(rule_meta["urgency"])
@@ -239,7 +312,7 @@ def merge_recommendations(llm_recs, triggered_cats):
     # Add LLMs
     custom_recs = []
     for rec in llm_recs:
-        cat = classify_llm_recommendation(rec)
+        cat = classify_llm_recommendation(rec, local_categories)
         if cat:
             cat_data[cat]["llms"].append(rec["intervention"])
             cat_data[cat]["timings"].append(rec["timing"])
@@ -331,9 +404,12 @@ def main():
     with open(args.gap_report, 'r') as f:
         report = json.load(f)
         
+    # Deepcopy CATEGORIES for request safety/thread safety
+    local_categories = copy.deepcopy(CATEGORIES)
+    
     # Execute rule engine
     print("Running rule engine against gap report...")
-    triggered_rules, triggered_cats = check_rules(report)
+    triggered_rules, triggered_cats = check_rules(report, local_categories)
     print(f"  Triggered rules ({len(triggered_rules)}):")
     for r in triggered_rules:
         print(f"    - {r}")
@@ -341,7 +417,7 @@ def main():
     # Merge and deduplicate recommendations
     llm_recs = report.get("llm_recommendations", [])
     print(f"Merging {len(llm_recs)} LLM recommendations with rule alerts...")
-    merged_plan = merge_recommendations(llm_recs, triggered_cats)
+    merged_plan = merge_recommendations(llm_recs, triggered_cats, local_categories)
     
     # Construct final output payload
     output_payload = {
@@ -350,6 +426,9 @@ def main():
         "planting_date": report.get("planting_date"),
         "current_dap": report.get("current_dap"),
         "last_observation_date": report.get("last_observation_date"),
+        "field_area_acres": report.get("field_area_acres", 1.0),
+        "agronomic_metadata": report.get("agronomic_metadata", {}),
+        "actual_nutrients": report.get("actual_nutrients", {"N": 0.0, "P": 0.0, "K": 0.0}),
         "overall_health_score": report.get("overall_health_score"),
         "analysis_scope": report.get("analysis_scope"),
         "critical_flags": report.get("critical_flags"),

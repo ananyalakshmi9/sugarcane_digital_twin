@@ -3,7 +3,8 @@ import sys
 import json
 import logging
 import subprocess
-from flask import Flask, request, jsonify, redirect, url_for, session, render_template
+from datetime import timedelta
+from flask import Flask, request, jsonify, redirect, url_for, session, render_template, make_response
 from dotenv import load_dotenv
 
 # Load env variables from .env file
@@ -22,6 +23,7 @@ logging.basicConfig(
 )
 app = Flask(__name__, template_folder="frontend/templates", static_folder="frontend/static")
 app.secret_key = "secret_session_key_95b227"
+app.permanent_session_lifetime = timedelta(minutes=15)
 
 # Default credentials (can be overridden via environment variables)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
@@ -47,6 +49,7 @@ def login():
         username = request.form.get("username")
         password = request.form.get("password")
         if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session.permanent = True
             session["logged_in"] = True
             logging.info("Admin logged in successfully.")
             return redirect(url_for("index"))
@@ -66,7 +69,11 @@ def logout():
 def index():
     if not is_logged_in():
         return redirect(url_for("login"))
-    return render_template("index.html")
+    response = make_response(render_template("index.html"))
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 # --- API ENDPOINTS ---
 
@@ -190,17 +197,28 @@ def get_farms():
     if not is_logged_in():
         return jsonify({"error": "Unauthorized"}), 401
         
-    clean_path = "data/cleaned/farm_data_clean.csv"
-    if not os.path.exists(clean_path):
+    db_path = "data/app.db"
+    if not os.path.exists(db_path):
         return jsonify([])
         
     try:
-        import pandas as pd
-        df = pd.read_csv(clean_path)
-        farms = df[['farm_id', 'farmer_name', 'variety']].drop_duplicates().to_dict(orient='records')
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT farm_id, farmer_name, variety FROM farms")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        farms = []
+        for r in rows:
+            farms.append({
+                "farm_id": r[0],
+                "farmer_name": r[1],
+                "variety": r[2]
+            })
         return jsonify(farms)
     except Exception as e:
-        logging.error(f"Failed to load farms: {e}")
+        logging.error(f"Failed to load farms from SQLite: {e}")
         return jsonify([])
 
 @app.route("/api/farm/<farm_id>", methods=["GET"])
@@ -208,9 +226,6 @@ def get_farm_detail(farm_id):
     if not is_logged_in():
         return jsonify({"error": "Unauthorized"}), 401
         
-    clean_path = "data/cleaned/farm_data_clean.csv"
-    coord_path = "data/raw/coordinates.xlsx"
-    
     res = {
         "farm_id": farm_id,
         "farmer_name": "",
@@ -221,43 +236,54 @@ def get_farm_detail(farm_id):
         "longitude": ""
     }
     
-    import pandas as pd
-    import numpy as np
-    import os
-    
-    # 1. Lookup in cleaned CSV
-    if os.path.exists(clean_path):
+    db_path = "data/app.db"
+    if not os.path.exists(db_path):
+        return jsonify(res)
+        
+    try:
+        import sqlite3
+        import pandas as pd
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Try to parse farm_id as integer
         try:
-            df_clean = pd.read_csv(clean_path)
-            df_clean['farm_id_str'] = df_clean['farm_id'].dropna().astype(str).str.strip().str.lower()
-            match_clean = df_clean[df_clean['farm_id_str'] == str(farm_id).strip().lower()]
-            if not match_clean.empty:
-                row = match_clean.iloc[0]
-                res["farmer_name"] = str(row.get("farmer_name", ""))
-                res["variety"] = str(row.get("variety", ""))
-                res["area_acres"] = float(row.get("area_acres")) if not pd.isna(row.get("area_acres")) else ""
+            f_id_val = int(farm_id)
+        except:
+            f_id_val = farm_id
+            
+        # 1. Lookup in farms table
+        cursor.execute("SELECT farmer_name, variety, area_acres, planting_date FROM farms WHERE farm_id = ?", (f_id_val,))
+        row = cursor.fetchone()
+        if row:
+            res["farmer_name"] = str(row[0] or "")
+            res["variety"] = str(row[1] or "")
+            res["area_acres"] = float(row[2]) if row[2] is not None else ""
+            
+            planting_date_raw = row[3]
+            try:
+                p_dt = pd.to_datetime(planting_date_raw)
+                res["planting_date"] = p_dt.strftime('%d-%m-%Y')
+            except:
+                res["planting_date"] = str(planting_date_raw or "")
                 
-                planting_date_raw = row.get("planting_date", "")
-                try:
-                    p_dt = pd.to_datetime(planting_date_raw)
-                    res["planting_date"] = p_dt.strftime('%d-%m-%Y')
-                except:
-                    res["planting_date"] = str(planting_date_raw)
-        except Exception as e:
-            logging.error(f"Error looking up farm in csv: {e}")
+        # 2. Lookup average coordinates in coordinates table
+        cursor.execute("SELECT AVG(lat), AVG(long) FROM coordinates WHERE farm_id = ?", (f_id_val,))
+        coords_row = cursor.fetchone()
+        if coords_row and coords_row[0] is not None:
+            res["latitude"] = float(coords_row[0])
+            res["longitude"] = float(coords_row[1])
             
-    # 2. Lookup in Coordinates excel
-    if os.path.exists(coord_path):
-        try:
-            df_coords = pd.read_excel(coord_path, sheet_name='Coordinates')
-            df_coords['Farm_id_str'] = df_coords['Farm_id'].dropna().astype(str).str.strip().str.lower()
-            match_coords = df_coords[df_coords['Farm_id_str'] == str(farm_id).strip().lower()]
-            if not match_coords.empty:
-                res["latitude"] = float(match_coords['Lat'].mean())
-                res["longitude"] = float(match_coords['Long'].mean())
-        except Exception as e:
-            logging.error(f"Error looking up coordinates: {e}")
+        # 3. Lookup individual boundary vertices
+        cursor.execute("SELECT lat, long FROM coordinates WHERE farm_id = ? ORDER BY vertex_index", (f_id_val,))
+        vertices = cursor.fetchall()
+        if vertices:
+            res["boundary"] = [{"lat": float(v[0]), "lng": float(v[1])} for v in vertices]
             
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error looking up farm detail in SQLite: {e}")
+        
     return jsonify(res)
 
 @app.route("/api/dashboard/stats", methods=["GET"])
@@ -418,13 +444,14 @@ def run_baseline_pipeline_async():
     t.daemon = True
     t.start()
 
-def save_farm_to_excel(farm_id, lat, lon, area, variety, planting_date):
+def save_farm_to_excel(farm_id, lat, lon, area, variety, planting_date, boundary=None):
     import pandas as pd
     import numpy as np
     import os
     
     # 1. Update Satellite_twin_data.xlsx sheet 'Farmer Data'
     excel_path = "data/raw/Satellite_twin_data.xlsx"
+    new_coords = []
     if os.path.exists(excel_path):
         try:
             xls = pd.ExcelFile(excel_path)
@@ -474,16 +501,24 @@ def save_farm_to_excel(farm_id, lat, lon, area, variety, planting_date):
                 sheets['Farmer Data'] = df_farmer
                 
             # 2. Update coordinates in Satellite_twin_data.xlsx coordinates sheet
-            d_deg = np.sqrt(float(area) * 4047.0) / 2.0 / 111000.0
-            new_coords = []
-            offsets = [(-1, -1), (-1, 1), (1, 1), (1, -1)]
-            for dx, dy in offsets:
-                new_coords.append({
-                    'Farm_id': int(farm_id) if str(farm_id).isdigit() else farm_id,
-                    'Farmer Name\nशेतकऱ्याचे नाव': f"Farm {farm_id}",
-                    'Lat': float(lat) + dx * d_deg,
-                    'Long': float(lon) + dy * d_deg
-                })
+            if boundary and len(boundary) >= 3:
+                for pt in boundary:
+                    new_coords.append({
+                        'Farm_id': int(farm_id) if str(farm_id).isdigit() else farm_id,
+                        'Farmer Name\nशेतकऱ्याचे नाव': f"Farm {farm_id}",
+                        'Lat': float(pt.get('lat')),
+                        'Long': float(pt.get('lng'))
+                    })
+            else:
+                d_deg = np.sqrt(float(area) * 4047.0) / 2.0 / 111000.0 if float(area) > 0 else 0.001
+                offsets = [(-1, -1), (-1, 1), (1, 1), (1, -1)]
+                for dx, dy in offsets:
+                    new_coords.append({
+                        'Farm_id': int(farm_id) if str(farm_id).isdigit() else farm_id,
+                        'Farmer Name\nशेतकऱ्याचे नाव': f"Farm {farm_id}",
+                        'Lat': float(lat) + dx * d_deg,
+                        'Long': float(lon) + dy * d_deg
+                    })
                 
             df_coords_s = sheets.get('Coordinates')
             if df_coords_s is not None:
@@ -528,6 +563,69 @@ def save_farm_to_excel(farm_id, lat, lon, area, variety, planting_date):
         except Exception as e:
             logging.error(f"Failed to save coordinates to {coord_path}: {e}")
             
+    # 3.5 Update SQLite database farms and coordinates tables
+    try:
+        import sqlite3
+        db_path = "data/app.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        farm_id_int = int(farm_id) if str(farm_id).isdigit() else 0
+        area_acres = float(area) if area else 0.0
+        
+        # Normalize date
+        p_dt = pd.to_datetime(planting_date, format='%d-%m-%Y', errors='coerce')
+        if pd.isnull(p_dt):
+            p_dt = pd.to_datetime(planting_date, errors='coerce')
+        planting_date_clean = p_dt.strftime('%Y-%m-%d') if pd.notnull(p_dt) else None
+        
+        # Normalize variety
+        def normalize_variety(v):
+            v = str(v).upper().replace(' ', '_')
+            if '0265' in v or '265' in v: return 'CO_265'
+            if '86032' in v: return 'CO_86032'
+            if '8005' in v: return '8005'
+            return v
+        variety_normalized = normalize_variety(variety)
+        
+        # season
+        try:
+            parts = planting_date.split('-')
+            year = int(parts[2])
+            season_str = f"{year}-{str(year+1)[-2:]}"
+        except:
+            season_str = "2025-26"
+            
+        cursor.execute("DELETE FROM farms WHERE farm_id = ?", (farm_id_int,))
+        cursor.execute("""
+        INSERT INTO farms (
+            farm_id, season, farmer_name, variety, crop_type_clean,
+            planting_date, area_acres, is_ideal
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        """, (farm_id_int, season_str, f"Farm {farm_id} User", variety_normalized, "newly_planted", planting_date_clean, area_acres, 0))
+        
+        cursor.execute("DELETE FROM coordinates WHERE farm_id = ?", (farm_id_int,))
+        
+        new_coords_sqlite = []
+        for idx, pt in enumerate(new_coords):
+            new_coords_sqlite.append((
+                farm_id_int,
+                idx,
+                float(pt['Lat']),
+                float(pt['Long'])
+            ))
+            
+        cursor.executemany("""
+        INSERT INTO coordinates (farm_id, vertex_index, lat, long)
+        VALUES (?, ?, ?, ?);
+        """, new_coords_sqlite)
+        
+        conn.commit()
+        conn.close()
+        logging.info(f"Successfully synced regular farm {farm_id} coordinates to SQLite.")
+    except Exception as e:
+        logging.error(f"Failed to sync regular farm {farm_id} to SQLite: {e}")
+
     # 4. Trigger baseline recalculation pipeline in background
     try:
         run_baseline_pipeline_async()
@@ -535,9 +633,11 @@ def save_farm_to_excel(farm_id, lat, lon, area, variety, planting_date):
         logging.error(f"Failed to run baseline recalculation pipeline: {e}")
 
 def save_raw_farm_to_excel(record):
+    import sqlite3
     import pandas as pd
     import numpy as np
     import os
+    import re
     
     farm_id = record.get('farm_id')
     lat = record.get('latitude')
@@ -578,174 +678,146 @@ def save_raw_farm_to_excel(record):
         except Exception as e:
             logging.error(f"Failed to auto-register variety {variety}: {e}")
 
-    # 1. Update Regular_farmers_data.xlsx
-    excel_path = "data/raw/Regular_farmers_data.xlsx"
-    template_path = "data/raw/Satellite_twin_data.xlsx"
+    # Normalise variety
+    def normalize_variety(v):
+        v = str(v).upper().replace(' ', '_')
+        if '0265' in v or '265' in v: return 'CO_265'
+        if '86032' in v: return 'CO_86032'
+        if '8005' in v: return '8005'
+        return v
+    variety_normalized = normalize_variety(variety)
     
-    if not os.path.exists(excel_path) and os.path.exists(template_path):
-        try:
-            xls_t = pd.ExcelFile(template_path)
-            sheets_t = {}
-            for s_name in xls_t.sheet_names:
-                df_t = pd.read_excel(template_path, sheet_name=s_name)
-                sheets_t[s_name] = df_t.iloc[0:0]
-            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-                for s_name, s_df in sheets_t.items():
-                    s_df.to_excel(writer, sheet_name=s_name, index=False)
-            logging.info(f"Initialized {excel_path} from template structure.")
-        except Exception as e:
-            logging.error(f"Failed to initialize {excel_path}: {e}")
+    # Normalise dates
+    p_dt = pd.to_datetime(planting_date, errors='coerce')
+    planting_date_clean = p_dt.strftime('%Y-%m-%d') if pd.notnull(p_dt) else None
+    
+    h_dt = pd.to_datetime(record.get('harvest_date'), errors='coerce')
+    harvest_date_clean = h_dt.strftime('%Y-%m-%d') if pd.notnull(h_dt) else None
+    
+    crop_duration_days = int((h_dt - p_dt).days) if pd.notnull(p_dt) and pd.notnull(h_dt) else None
+    
+    # Area and yields
+    area_acres = float(area) if area else 0.0
+    yield_tonnes = float(record.get('yield_achieved') or 0.0)
+    yield_per_acre = yield_tonnes / area_acres if area_acres > 0 else 0.0
+    
+    # Irrigation
+    irrigation_type = record.get('irrigation_type') or 'unknown'
+    irrigation_interval_veg = float(record.get('irrigation_interval_veg') or 15.0)
+    irrigation_interval_rep = float(record.get('irrigation_interval_rep') or 15.0)
+    
+    # Incident
+    incident = record.get('incident')
+    incident_flag = 1 if incident and str(incident).lower().strip() not in ['no', 'none', 'nan', '0'] else 0
+    
+    # Brix / CCS
+    brix = float(record.get('brix')) if record.get('brix') else None
+    
+    # Fertilizer application extraction
+    fertilizer_application = record.get('fertilizer_application')
+    
+    def extract_fertilizer_bags(text):
+        if not text:
+            return 0, 0, 0
+        text = str(text).lower()
+        
+        u_bags = 0
+        s_bags = 0
+        m_bags = 0
+        
+        urea_matches = re.findall(r'(\d+)\s*(?:bag)?s?\s*(?:of\s*)?urea', text)
+        if urea_matches:
+            u_bags = sum(int(m) for m in urea_matches)
+            
+        ssp_matches = re.findall(r'(\d+)\s*(?:bag)?s?\s*(?:of\s*)?ssp', text)
+        if ssp_matches:
+            s_bags = sum(int(m) for m in ssp_matches)
+            
+        mop_matches = re.findall(r'(\d+)\s*(?:bag)?s?\s*(?:of\s*)?(?:mop|potash)', text)
+        if mop_matches:
+            m_bags = sum(int(m) for m in mop_matches)
+            
+        if u_bags == 0 and s_bags == 0 and m_bags == 0:
+            general_matches = re.findall(r'(\d+)\s*bag', text)
+            if general_matches:
+                u_bags = sum(int(m) for m in general_matches)
+                
+        return u_bags, s_bags, m_bags
 
-    if os.path.exists(excel_path):
-        try:
-            xls = pd.ExcelFile(excel_path)
-            sheets = {}
-            for s_name in xls.sheet_names:
-                sheets[s_name] = pd.read_excel(excel_path, sheet_name=s_name)
-                
-            df_farmer = sheets.get('Farmer Data')
-            if df_farmer is not None:
-                # Remove duplicate Farm_id
-                try:
-                    fid = int(farm_id)
-                    df_farmer = df_farmer[df_farmer['Farm_id'] != fid]
-                except:
-                    df_farmer = df_farmer[df_farmer['Farm_id'] != farm_id]
-                    
-                s_no = 1
-                if not df_farmer['S.No'].empty:
-                    valid_s_nos = pd.to_numeric(df_farmer['S.No'], errors='coerce').dropna()
-                    if not valid_s_nos.empty:
-                        s_no = int(valid_s_nos.max()) + 1
-                        
-                # Create a new row
-                new_row = {}
-                for col in df_farmer.columns:
-                    new_row[col] = np.nan
-                    
-                # Helper to map inputs
-                def get_col_name(prefix):
-                    for col in df_farmer.columns:
-                        if str(col).lower().startswith(prefix.lower()):
-                            return col
-                    for col in df_farmer.columns:
-                        if prefix.lower() in str(col).lower():
-                            return col
-                    return None
-                    
-                # Fill row fields
-                new_row['S.No'] = s_no
-                new_row['Farm_id'] = int(farm_id) if str(farm_id).isdigit() else farm_id
-                
-                # Safe conversions helpers
-                def to_float(v):
-                    if v is None or str(v).strip() == "":
-                        return np.nan
-                    try:
-                        return float(v)
-                    except:
-                        return np.nan
-                        
-                # Mapping dict
-                mappings = {
-                    'Year': record.get('year'),
-                    'Farmer Name': record.get('farmer_name'),
-                    'Village': record.get('village'),
-                    'Variety': record.get('variety'),
-                    'Newly Planted': record.get('crop_type'),
-                    'Planting Date': pd.to_datetime(planting_date, format='%d-%m-%Y', errors='coerce') if planting_date else np.nan,
-                    'Harvest Date': pd.to_datetime(record.get('harvest_date'), format='%d-%m-%Y', errors='coerce') if record.get('harvest_date') else np.nan,
-                    'Cultivating area': to_float(area),
-                    'Yield': to_float(record.get('yield_achieved')),
-                    'Any untoward incident': record.get('incident'),
-                    'Soil Type': record.get('soil_type'),
-                    'Land Preparation': record.get('land_prep'),
-                    'Total cost': to_float(record.get('total_cost')),
-                    'Total revenue': to_float(record.get('total_revenue')),
-                    'Irrigation type': record.get('irrigation_type'),
-                    'Irrigation interval (vegetative': to_float(record.get('irrigation_interval_veg')),
-                    'Fertigation': record.get('fertigation'),
-                    'Irrigation interval (Rep': to_float(record.get('irrigation_interval_rep')),
-                    'Fertilizer Application': record.get('fertilizer_application'),
-                    'PGR': record.get('pgr'),
-                    'Micronutrients': record.get('micronutrients'),
-                    'SOIL HEALTH': record.get('soil_health'),
-                    'HUMIC ACID': record.get('humic_acid'),
-                    'MULTI MICRONUTRIENT': record.get('multi_nutrient'),
-                    'SEAWEED EXTRACT': record.get('seaweed_extract'),
-                    'BIOFERTILIZERS': record.get('biofertilizers'),
-                    'BIOCONTOL AGENTS': record.get('biocontrol_agents'),
-                    'BIOPESTICIDE': record.get('biopesticide'),
-                    'AMINO ACIDS': record.get('amino_acids'),
-                    'SPECIAL PRACTICES': record.get('special_practices'),
-                    'Brix': to_float(record.get('brix')),
-                    'CCS': to_float(record.get('ccs'))
-                }
-                
-                for prefix, val in mappings.items():
-                    col_name = get_col_name(prefix)
-                    if col_name:
-                        new_row[col_name] = val
-                        
-                df_farmer = pd.concat([df_farmer, pd.DataFrame([new_row])], ignore_index=True)
-                sheets['Farmer Data'] = df_farmer
-                
-            # 2. Coordinates sheet updates (calculate 4 corner buffers)
-            d_deg = np.sqrt(float(area) * 4047.0) / 2.0 / 111000.0 if area else 0.001
-            new_coords = []
-            offsets = [(-1, -1), (-1, 1), (1, 1), (1, -1)]
-            for dx, dy in offsets:
-                new_coords.append({
-                    'Farm_id': int(farm_id) if str(farm_id).isdigit() else farm_id,
-                    'Farmer Name\nशेतकऱ्याचे नाव': f"Farm {farm_id}",
-                    'Lat': float(lat) + dx * d_deg,
-                    'Long': float(lon) + dy * d_deg
-                })
-                
-            df_coords_s = sheets.get('Coordinates')
-            if df_coords_s is not None:
-                try:
-                    fid = int(farm_id)
-                    df_coords_s = df_coords_s[df_coords_s['Farm_id'] != fid]
-                except:
-                    df_coords_s = df_coords_s[df_coords_s['Farm_id'] != farm_id]
-                df_coords_s = pd.concat([df_coords_s, pd.DataFrame(new_coords)], ignore_index=True)
-                sheets['Coordinates'] = df_coords_s
-                
-            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-                for s_name, s_df in sheets.items():
-                    s_df.to_excel(writer, sheet_name=s_name, index=False)
-            logging.info(f"Successfully saved raw farm {farm_id} to {excel_path}")
-        except Exception as e:
-            logging.error(f"Failed to save raw farm to {excel_path}: {e}")
-            
-    # 3. Update coordinates.xlsx sheet 'Coordinates'
-    coord_path = "data/raw/coordinates.xlsx"
-    if os.path.exists(coord_path):
-        try:
-            xls_c = pd.ExcelFile(coord_path)
-            sheets_c = {}
-            for s_name in xls_c.sheet_names:
-                sheets_c[s_name] = pd.read_excel(coord_path, sheet_name=s_name)
-                
-            df_coords_c = sheets_c.get('Coordinates')
-            if df_coords_c is not None:
-                try:
-                    fid = int(farm_id)
-                    df_coords_c = df_coords_c[df_coords_c['Farm_id'] != fid]
-                except:
-                    df_coords_c = df_coords_c[df_coords_c['Farm_id'] != farm_id]
-                df_coords_c = pd.concat([df_coords_c, pd.DataFrame(new_coords)], ignore_index=True)
-                sheets_c['Coordinates'] = df_coords_c
-                
-            with pd.ExcelWriter(coord_path, engine='openpyxl') as writer:
-                for s_name, s_df in sheets_c.items():
-                    s_df.to_excel(writer, sheet_name=s_name, index=False)
-            logging.info(f"Successfully saved coordinates for farm {farm_id} to {coord_path}")
-        except Exception as e:
-            logging.error(f"Failed to save coordinates to {coord_path}: {e}")
-            
-    # 4. Trigger baseline recalculation pipeline in background
+    urea_bags, ssp_bags, mop_bags = extract_fertilizer_bags(fertilizer_application)
+    
+    n_kg_total = urea_bags * 20.7
+    p_kg_total = ssp_bags * 8.0
+    k_kg_total = mop_bags * 30.0
+    
+    n_kg_per_acre = n_kg_total / area_acres if area_acres > 0 else 0.0
+    p_kg_per_acre = p_kg_total / area_acres if area_acres > 0 else 0.0
+    k_kg_per_acre = k_kg_total / area_acres if area_acres > 0 else 0.0
+    
+    # Season inference
+    season = record.get('season')
+    if not season and p_dt is not None:
+        year = p_dt.year
+        if p_dt.month > 6:
+            season = f"{year}-{str(year+1)[-2:]}"
+        else:
+            season = f"{year-1}-{str(year)[-2:]}"
+    elif not season:
+        season = "2023-24"
+        
+    farm_id_int = int(farm_id) if str(farm_id).isdigit() else 0
+    crop_type_clean = 'ratoon' if record.get('crop_type') and 'ratoon' in str(record.get('crop_type')).lower() else 'newly_planted'
+    farmer_name = record.get('farmer_name') or f"Farm {farm_id}"
+    
+    # 1. Update SQLite farms table
+    db_path = "data/app.db"
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM farms WHERE farm_id = ?", (farm_id_int,))
+    cursor.execute("""
+    INSERT INTO farms (
+        farm_id, season, farmer_name, variety, crop_type_clean,
+        planting_date, harvest_date, crop_duration_days, area_acres,
+        yield_tonnes, yield_per_acre, irrigation_type, irrigation_interval_veg,
+        irrigation_interval_rep, incident_flag, brix, urea_bags_total,
+        ssp_bags_total, mop_bags_total, n_kg_total, p_kg_total, k_kg_total,
+        n_kg_per_acre, p_kg_per_acre, k_kg_per_acre, is_ideal
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    """, (
+        farm_id_int, season, farmer_name, variety_normalized, crop_type_clean,
+        planting_date_clean, harvest_date_clean, crop_duration_days, area_acres,
+        yield_tonnes, yield_per_acre, irrigation_type, irrigation_interval_veg,
+        irrigation_interval_rep, incident_flag, brix, urea_bags,
+        ssp_bags, mop_bags, n_kg_total, p_kg_total, k_kg_total,
+        n_kg_per_acre, p_kg_per_acre, k_kg_per_acre, 0
+    ))
+    
+    # 2. Update SQLite coordinates table (use custom boundary polygon if provided, otherwise generate 4-point buffer)
+    boundary = record.get('boundary')
+    new_coords = []
+    
+    if boundary and len(boundary) >= 3:
+        for idx, pt in enumerate(boundary):
+            new_coords.append((farm_id_int, idx, float(pt.get('lat')), float(pt.get('lng'))))
+    else:
+        d_deg = np.sqrt(area_acres * 4047.0) / 2.0 / 111000.0 if area_acres > 0 else 0.001
+        offsets = [(-1, -1), (-1, 1), (1, 1), (1, -1)]
+        for idx, (dx, dy) in enumerate(offsets):
+            lat_val = float(lat) + dx * d_deg
+            lon_val = float(lon) + dy * d_deg
+            new_coords.append((farm_id_int, idx, lat_val, lon_val))
+        
+    cursor.execute("DELETE FROM coordinates WHERE farm_id = ?", (farm_id_int,))
+    cursor.executemany("""
+    INSERT INTO coordinates (farm_id, vertex_index, lat, long)
+    VALUES (?, ?, ?, ?);
+    """, new_coords)
+    
+    conn.commit()
+    conn.close()
+    logging.info(f"Successfully saved farm {farm_id} and coordinates to SQLite.")
+    
+    # 3. Trigger baseline recalculation pipeline in background
     try:
         run_baseline_pipeline_async()
     except Exception as e:
@@ -755,39 +827,48 @@ def auto_pull_live_data_if_needed(farm_id, live_json):
     import pandas as pd
     import numpy as np
     import os
+    import sqlite3
+    import subprocess
+    import sys
     
     if os.path.exists(live_json):
         return True, None
         
-    # Try looking up in Excel coordinates
-    coord_path = "data/raw/coordinates.xlsx"
-    if not os.path.exists(coord_path):
-        return False, "Coordinates registry file coordinates.xlsx not found."
+    db_path = "data/app.db"
+    if not os.path.exists(db_path):
+        return False, "SQLite database app.db not found."
         
     try:
-        df_coords = pd.read_excel(coord_path, sheet_name='Coordinates')
-        df_coords['Farm_id_str'] = df_coords['Farm_id'].dropna().astype(str).str.strip().str.lower()
-        match_coords = df_coords[df_coords['Farm_id_str'] == str(farm_id).strip().lower()]
-        if match_coords.empty:
-            return False, f"Farm ID {farm_id} coordinates centroid not found in raw Coordinates registry."
-            
-        lat = match_coords.iloc[0]['Lat']
-        lon = match_coords.iloc[0]['Long']
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
         
-        # Look up in cleaned csv for variety, planting_date, area_acres
-        clean_path = "data/cleaned/farm_data_clean.csv"
-        if not os.path.exists(clean_path):
-            return False, "Cleaned database farm_data_clean.csv not found."
+        # Look up coordinates centroid
+        # Try to parse farm_id as integer
+        try:
+            f_id_val = int(farm_id)
+        except:
+            f_id_val = farm_id
             
-        df_clean = pd.read_csv(clean_path)
-        df_clean['farm_id_str'] = df_clean['farm_id'].dropna().astype(str).str.strip().str.lower()
-        match_clean = df_clean[df_clean['farm_id_str'] == str(farm_id).strip().lower()]
-        if match_clean.empty:
-            return False, f"Farm ID {farm_id} details (variety, planting date) not found in cleaned database."
+        cursor.execute("SELECT AVG(lat), AVG(long) FROM coordinates WHERE farm_id = ?", (f_id_val,))
+        coords_row = cursor.fetchone()
+        if not coords_row or coords_row[0] is None:
+            conn.close()
+            return False, f"Farm ID {farm_id} coordinates centroid not found in SQLite registry."
             
-        variety = match_clean.iloc[0]['variety']
-        area = match_clean.iloc[0]['area_acres']
-        planting_date_raw = match_clean.iloc[0]['planting_date']
+        lat = coords_row[0]
+        lon = coords_row[1]
+        
+        # Look up details in farms table
+        cursor.execute("SELECT variety, area_acres, planting_date FROM farms WHERE farm_id = ?", (f_id_val,))
+        farm_row = cursor.fetchone()
+        conn.close()
+        
+        if not farm_row:
+            return False, f"Farm ID {farm_id} details not found in SQLite farms table."
+            
+        variety = farm_row[0]
+        area = farm_row[1]
+        planting_date_raw = farm_row[2]
         
         # parse planting date
         try:
@@ -856,11 +937,13 @@ def live_twin_pull():
         variety = str(req_data.get("variety", "")).strip()
         planting_date = str(req_data.get("planting_date", "")).strip()
         
+        boundary = req_data.get("boundary")
+        
         if not farm_id or not lat or not lon or not area or not variety or not planting_date:
             return jsonify({"status": "error", "message": "All fields are required."}), 400
             
-        # Store directly in the raw Excel files
-        save_farm_to_excel(farm_id, lat, lon, area, variety, planting_date)
+        # Store directly in the raw Excel files and SQLite
+        save_farm_to_excel(farm_id, lat, lon, area, variety, planting_date, boundary)
             
         safe_name = farm_id.lower().replace(" ", "_")
         target_path = f"data/live_farms/{safe_name}_live.json"
@@ -938,6 +1021,13 @@ def live_twin_analyze():
         p3 = subprocess.run(cmd3, capture_output=True, text=True)
         if p3.returncode != 0:
             return jsonify({"status": "error", "message": "Intervention rules compilation failed.", "details": p3.stderr}), 500
+            
+        # Step 4: run Brix predictor script
+        logging.info(f"Running Brix predictor for {farm_id}")
+        cmd4 = [sys.executable, "current_twin/brix_predictor.py", "--predict", "--farm-id", farm_id, "-o", plan_json]
+        p4 = subprocess.run(cmd4, capture_output=True, text=True)
+        if p4.returncode != 0:
+            logging.error(f"Brix prediction failed: {p4.stderr}")
             
         # Load final intervention plan JSON and return
         with open(plan_json, 'r') as f:

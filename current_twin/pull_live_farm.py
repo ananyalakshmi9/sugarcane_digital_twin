@@ -157,11 +157,40 @@ def main():
         sys.exit(1)
         
     # 2. Setup geometries
-    radius = calculate_buffer_radius(farm['field_area_acres'])
-    print(f"Calculated circular buffer radius: {radius:.2f} meters for {farm['field_area_acres']} acres.")
+    db_path = "data/app.db"
+    use_polygon = False
+    roi = None
     
-    centroid = ee.Geometry.Point([farm['longitude'], farm['latitude']])
-    roi = centroid.buffer(radius)
+    if os.path.exists(db_path):
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            try:
+                f_id_val = int(farm['farm_id'])
+            except:
+                f_id_val = farm['farm_id']
+            cursor.execute("SELECT lat, long FROM coordinates WHERE farm_id = ? ORDER BY vertex_index", (f_id_val,))
+            vertices = cursor.fetchall()
+            conn.close()
+            
+            if vertices and len(vertices) >= 3:
+                # GEE Polygon expects coordinates as [[lon1, lat1], [lon2, lat2], ...]
+                pts = [[float(v[1]), float(v[0])] for v in vertices]
+                # Ensure the polygon is closed (GEE requires the first and last point to be identical)
+                if pts[0] != pts[-1]:
+                    pts.append(pts[0])
+                roi = ee.Geometry.Polygon([pts])
+                use_polygon = True
+                print(f"Loaded custom polygon boundary with {len(vertices)} vertices from SQLite database.")
+        except Exception as e:
+            print(f"Failed to load coordinates from SQLite: {e}. Falling back to circular buffer.")
+            
+    if not use_polygon:
+        radius = calculate_buffer_radius(farm['field_area_acres'])
+        print(f"Calculated circular buffer radius: {radius:.2f} meters for {farm['field_area_acres']} acres.")
+        centroid = ee.Geometry.Point([farm['longitude'], farm['latitude']])
+        roi = centroid.buffer(radius)
     
     # 3. Query ranges
     # GEE filterDate end is exclusive, so query until tomorrow to capture all available data up to today
@@ -174,7 +203,8 @@ def main():
     # Dictionary to hold raw timeseries data points
     raw_data = {
         "NDVI": [], "NDRE": [], "NDWI": [], "EVI": [], "MSAVI": [],
-        "SAR": [], "temp": [], "precip": [], "RH": [], "wind": []
+        "SAR": [], "temp": [], "precip": [], "RH": [], "wind": [],
+        "LST": []
     }
     
     # --- A. Sentinel-2 L2A ---
@@ -252,6 +282,35 @@ def main():
                     raw_data["SAR"].append((obs_date, dap, props.get('VH_VV')))
     except Exception as e:
         print(f"  Warning: Sentinel-1 query failed: {e}")
+
+    # --- B.2 Landsat 8/9 LST ---
+    print("Fetching Landsat 8/9 thermal LST...")
+    l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2').filterBounds(roi).filterDate(p_date_str, end_date_str)
+    l9 = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2').filterBounds(roi).filterDate(p_date_str, end_date_str)
+    landsat = l8.merge(l9).select(['ST_B10'])
+    
+    def get_lst(image):
+        lst_c = image.select('ST_B10').multiply(0.00341802).add(149.0).subtract(273.15).rename('LST')
+        # Mask values outside [0.0, 70.0]
+        mask = lst_c.gte(0.0).And(lst_c.lte(70.0))
+        lst_c = lst_c.updateMask(mask)
+        
+        date = image.date().format('YYYY-MM-dd')
+        stats = lst_c.reduceRegion(reducer=ee.Reducer.mean(), geometry=roi, scale=30, maxPixels=1e9)
+        return ee.Feature(None, stats).set('date', date)
+        
+    try:
+        landsat_features = ee.FeatureCollection(landsat.map(get_lst)).getInfo()['features']
+        print(f"  Found {len(landsat_features)} Landsat acquisitions.")
+        for feat in landsat_features:
+            props = feat['properties']
+            obs_date = props.get('date')
+            if obs_date and props.get('LST') is not None:
+                dap = (datetime.datetime.strptime(obs_date, "%Y-%m-%d").date() - farm['planting_date']).days
+                if dap >= 0:
+                    raw_data["LST"].append((obs_date, dap, props.get('LST')))
+    except Exception as e:
+        print(f"  Warning: Landsat LST query failed: {e}")
 
     # --- C. ERA5-Land Weather ---
     print("Fetching ERA5-Land weather parameters...")
@@ -346,7 +405,8 @@ def main():
         "temp": output_binned.get("temp", []),
         "precip": output_binned.get("precip", []),
         "RH": output_binned.get("RH", []),
-        "wind": output_binned.get("wind", [])
+        "wind": output_binned.get("wind", []),
+        "LST": output_binned.get("LST", [])
     }
     
     # Save output to JSON

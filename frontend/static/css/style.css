@@ -736,6 +736,7 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+    width: max-content;
 }
 
 .heatmap-label {
@@ -743,11 +744,13 @@ body {
     font-size: 12px;
     font-weight: 600;
     color: var(--muted-text);
+    flex-shrink: 0;
 }
 
 .heatmap-cells {
     display: flex;
     gap: 4px;
+    flex-shrink: 0;
 }
 
 .heatmap-cell {
@@ -758,6 +761,7 @@ body {
     border: 1px solid var(--border);
     cursor: pointer;
     transition: var(--transition);
+    flex-shrink: 0;
 }
 
 .heatmap-cell:hover {

@@ -11,15 +11,17 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
     # Load farms
     farms_df = pd.read_csv(farm_data_path)
     
-    # Load coordinates
-    coords_df = pd.read_excel(coord_path, sheet_name='Coordinates')
-    coords_df['Farm_id'] = coords_df['Farm_id'].ffill()
-    coords_df = coords_df.dropna(subset=['Lat', 'Long'])
+    # Load coordinates from SQLite
+    import sqlite3
+    db_path = "data/app.db"
+    conn = sqlite3.connect(db_path)
+    coords_df = pd.read_sql_query("SELECT farm_id, lat, long FROM coordinates ORDER BY farm_id, vertex_index", conn)
+    conn.close()
     
     # Build polygons
     polygons = {}
-    for farm_id, group in coords_df.groupby('Farm_id'):
-        pts = group[['Long', 'Lat']].values.tolist()
+    for farm_id, group in coords_df.groupby('farm_id'):
+        pts = group[['long', 'lat']].values.tolist()
         if len(pts) >= 3:
             polygons[int(farm_id)] = ee.Geometry.Polygon([pts])
             
@@ -117,7 +119,33 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
         except Exception as e:
             print(f"S1 failed for {farm_id}: {e}")
 
-        # 3. ERA5-Land Weather
+        # 3. Landsat 8/9 LST
+        l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2').filterBounds(roi).filterDate(p_date, h_date)
+        l9 = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2').filterBounds(roi).filterDate(p_date, h_date)
+        landsat = l8.merge(l9).select(['ST_B10'])
+        
+        def get_lst(image):
+            lst_c = image.select('ST_B10').multiply(0.00341802).add(149.0).subtract(273.15).rename('LST')
+            # Mask values outside [0.0, 70.0]
+            mask = lst_c.gte(0.0).And(lst_c.lte(70.0))
+            lst_c = lst_c.updateMask(mask)
+            
+            date = image.date().format('YYYY-MM-dd')
+            stats = lst_c.reduceRegion(reducer=ee.Reducer.mean(), geometry=roi, scale=30, maxPixels=1e9)
+            return ee.Feature(None, stats).set('date', date)
+            
+        try:
+            landsat_features = ee.FeatureCollection(landsat.map(get_lst)).getInfo()['features']
+            for feat in landsat_features:
+                props = feat['properties']
+                if props.get('LST') is not None:
+                    dap = (pd.to_datetime(props['date']) - pd.to_datetime(p_date)).days
+                    farm_records.append({'farm_id': farm_id, 'season': season, 'observation_date': props['date'], 'DAP': dap,
+                                         'LST': props.get('LST')})
+        except Exception as e:
+            print(f"Landsat LST failed for {farm_id}: {e}")
+
+        # 4. ERA5-Land Weather
         era5 = ee.ImageCollection('ECMWF/ERA5_LAND/DAILY_AGGR') \
             .filterBounds(roi) \
             .filterDate(p_date, h_date) \
@@ -142,7 +170,7 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
                     
                     farm_records.append({'farm_id': farm_id, 'season': season, 'observation_date': props['date'], 'DAP': dap,
                                          'temperature_2m': t_c, 'total_precipitation_sum': precip_mm,
-                                         'relative_humidity': rh, 'wind_speed_10m': wind_speed})
+                                          'relative_humidity': rh, 'wind_speed_10m': wind_speed})
         except Exception as e:
             print(f"Weather failed for {farm_id}: {e}")
 
@@ -152,7 +180,7 @@ def run_gee_pipeline(farm_data_path, coord_path, output_path):
     df = pd.DataFrame(all_records)
     
     # Ensure all columns exist
-    expected_cols = ['farm_id', 'season', 'observation_date', 'DAP', 'NDVI', 'NDRE', 'NDWI', 'EVI', 'MSAVI', 'VH_VV', 'temperature_2m', 'total_precipitation_sum', 'relative_humidity', 'wind_speed_10m']
+    expected_cols = ['farm_id', 'season', 'observation_date', 'DAP', 'NDVI', 'NDRE', 'NDWI', 'EVI', 'MSAVI', 'VH_VV', 'temperature_2m', 'total_precipitation_sum', 'relative_humidity', 'wind_speed_10m', 'LST']
     for col in expected_cols:
         if col not in df.columns:
             df[col] = np.nan

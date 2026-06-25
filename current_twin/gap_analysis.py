@@ -15,7 +15,8 @@ FEATURE_MAPPING = {
     "temp": "temperature_2m",
     "precip": "total_precipitation_sum",
     "RH": "relative_humidity",
-    "wind": "wind_speed_10m"
+    "wind": "wind_speed_10m",
+    "LST": "LST"
 }
 
 FEATURE_DISPLAY_NAMES = {
@@ -28,7 +29,8 @@ FEATURE_DISPLAY_NAMES = {
     "temp": "2m Air Temperature",
     "precip": "Daily Precipitation Sum",
     "RH": "Relative Humidity",
-    "wind": "10m Wind Speed"
+    "wind": "10m Wind Speed",
+    "LST": "Land Surface Temperature"
 }
 
 def parse_args():
@@ -225,12 +227,54 @@ def main():
             item["reason"] = f"{display_name} shows a persistent deviation from the Ideal Twin mean over {item['consecutive_red_bins']} consecutive bins (max deviation magnitude: {item['max_percentage_deviation']:.1f}%)."
             
     # 5. Compile Output
+    field_area_acres = float(farm_data.get('field_area_acres', farm_data.get('area_acres', 1.0)))
+    agronomic_metadata = ideal_data.get('agronomic_metadata', {})
+    
+    # Look up actual nutrients and coordinates centroid from SQLite database
+    actual_nutrients = {"N": 0.0, "P": 0.0, "K": 0.0}
+    latitude = None
+    longitude = None
+    db_path = "data/app.db"
+    if os.path.exists(db_path):
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Try to parse farm_id as integer
+            try:
+                f_id_val = int(farm_id)
+            except:
+                f_id_val = farm_id
+                
+            cursor.execute("SELECT n_kg_per_acre, p_kg_per_acre, k_kg_per_acre FROM farms WHERE farm_id = ?", (f_id_val,))
+            res_nutrients = cursor.fetchone()
+            if res_nutrients:
+                actual_nutrients["N"] = float(res_nutrients[0] or 0.0)
+                actual_nutrients["P"] = float(res_nutrients[1] or 0.0)
+                actual_nutrients["K"] = float(res_nutrients[2] or 0.0)
+                
+            cursor.execute("SELECT AVG(lat), AVG(long) FROM coordinates WHERE farm_id = ?", (f_id_val,))
+            res_coords = cursor.fetchone()
+            if res_coords and res_coords[0] is not None:
+                latitude = float(res_coords[0])
+                longitude = float(res_coords[1])
+                
+            conn.close()
+        except Exception as e:
+            print(f"Warning: Failed to load actual nutrients / centroid from SQLite: {e}")
+            
     gap_report = {
         "farm_id": farm_id,
         "variety": variety,
         "planting_date": planting_date,
         "current_dap": current_dap,
         "last_observation_date": last_observation_date,
+        "field_area_acres": field_area_acres,
+        "latitude": latitude,
+        "longitude": longitude,
+        "agronomic_metadata": agronomic_metadata,
+        "actual_nutrients": actual_nutrients,
         "overall_health_score": round(health_score, 1),
         "analysis_scope": f"up to DAP {max_eval_bin} only — crop still growing",
         "critical_flags": critical_flags,

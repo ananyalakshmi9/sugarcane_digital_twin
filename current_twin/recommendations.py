@@ -2,9 +2,8 @@ import os
 import sys
 import json
 import argparse
+import requests
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 
 SYSTEM_INSTRUCTION = """You are an experienced sugarcane agronomist advising farmers in Maharashtra, India.
 This is a farm currently mid-season. Based on the satellite-derived deviations so far,
@@ -25,16 +24,29 @@ def parse_args():
                         help="Path to write the merged report. If omitted, overwrites the input gap report file in-place.")
     return parser.parse_args()
 
-def get_api_key(env_path):
-    """Retrieve Gemini API Key from environment or .env file."""
+def get_ollama_config(env_path):
+    """Retrieve Ollama configurations from environment or .env file."""
     if os.path.exists(env_path):
         load_dotenv(dotenv_path=env_path)
     else:
         load_dotenv() # Fallback to default .env lookup
         
-    # Read GEMINI_API_KEY first, fallback to ANTHROPIC_API_KEY as requested
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
-    return api_key
+    url = os.getenv("OLLAMA_API_URL")
+    model = os.getenv("OLLAMA_MODEL", "sike_aditya/AgriLlama")
+    
+    if not url:
+        # Auto-detect if running inside Docker or directly on host
+        if os.path.exists('/.dockerenv'):
+            url = "http://host.docker.internal:11434"
+        else:
+            url = "http://localhost:11434"
+    else:
+        # If OLLAMA_API_URL is set (e.g. to host.docker.internal) but we are NOT inside Docker,
+        # fallback to localhost so host testing works out-of-the-box.
+        if not os.path.exists('/.dockerenv') and "host.docker.internal" in url:
+            url = url.replace("host.docker.internal", "localhost")
+            
+    return url, model
 
 def build_agronomic_prompt(report):
     """Prepare context-rich prompt for the agronomist model."""
@@ -91,29 +103,103 @@ Top Critical Deviations Detected:
 """
     return prompt
 
-def call_gemini_api(api_key, prompt_content, system_instr, model_name='gemini-2.5-flash'):
-    """Initialize client and call the Gemini API."""
-    client = genai.Client(api_key=api_key)
+def call_ollama_api(url, model, prompt_content, system_instr):
+    """Call Ollama's Chat API with JSON output constraint."""
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_instr},
+            {"role": "user", "content": prompt_content}
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.2
+        },
+        "format": "json"
+    }
+    # 45-second timeout for local model generation
+    response = requests.post(f"{url}/api/chat", json=payload, timeout=45)
+    response.raise_for_status()
+    res_json = response.json()
     
-    response = client.models.generate_content(
-        model=model_name,
-        contents=prompt_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instr,
-            response_mime_type="application/json",
-            temperature=0.2
-        )
-    )
-    return response
+    prompt_tokens = res_json.get("prompt_eval_count", 0)
+    response_tokens = res_json.get("eval_count", 0)
+    if prompt_tokens or response_tokens:
+        print(f"Token Usage - Prompt: {prompt_tokens}, Response: {response_tokens}, Total: {prompt_tokens + response_tokens}")
+        
+    content = res_json.get("message", {}).get("content", "")
+    return content
+
+def clean_recommendations(data):
+    """Robustly clean and extract a standardized list of recommendations from LLM output."""
+    raw_list = []
+    
+    # 1. Extract the list from dictionary if LLM wrapped it
+    if isinstance(data, dict):
+        list_keys = []
+        for k, v in data.items():
+            if isinstance(v, list):
+                list_keys.append(k)
+        
+        if list_keys:
+            # Prioritize matching keys containing 'intervention' or 'recommendation' or 'action' or 'list'
+            priority_keys = [k for k in list_keys if any(x in k.lower() for x in ["interv", "recom", "action", "list", "plan"])]
+            chosen_key = priority_keys[0] if priority_keys else list_keys[0]
+            raw_list = data[chosen_key]
+        else:
+            # Check if dict itself represents a single recommendation
+            if any(x in data for x in ["intervention", "description", "action"]):
+                raw_list = [data]
+            else:
+                for k, v in data.items():
+                    if isinstance(v, dict):
+                        raw_list.append(v)
+    elif isinstance(data, list):
+        raw_list = data
+        
+    cleaned_list = []
+    for item in raw_list:
+        if isinstance(item, str):
+            cleaned_list.append({
+                "intervention": item,
+                "timing": "immediate",
+                "expected_outcome": "Improvement of crop health.",
+                "urgency": "monitor"
+            })
+            continue
+            
+        if not isinstance(item, dict):
+            continue
+            
+        intervention = item.get("intervention") or item.get("description") or item.get("action") or item.get("type") or item.get("text") or "AI recommendation"
+        timing = item.get("timing") or "immediate"
+        expected_outcome = item.get("expected_outcome") or item.get("outcome") or item.get("expected") or item.get("result") or "Improvement of crop health."
+        urgency = item.get("urgency") or "monitor"
+        
+        urg_lower = str(urgency).lower()
+        if "high" in urg_lower or "critical" in urg_lower or "immediate" in urg_lower:
+            urgency = "immediate"
+        elif "medium" in urg_lower or "7" in urg_lower:
+            urgency = "within_7_days"
+        elif "low" in urg_lower or "monitor" in urg_lower or "14" in urg_lower:
+            urgency = "monitor"
+            
+        cleaned_list.append({
+            "intervention": str(intervention).strip(),
+            "timing": str(timing).strip(),
+            "expected_outcome": str(expected_outcome).strip(),
+            "urgency": str(urgency).strip()
+        })
+        
+    return cleaned_list
 
 def main():
     args = parse_args()
     
-    # 1. Retrieve API key
-    api_key = get_api_key(args.env_file)
-    if not api_key:
-        print("No API key")
-        sys.exit(1)
+    # 1. Retrieve Ollama Config
+    url, model = get_ollama_config(args.env_file)
+    print(f"Configured Ollama URL: {url}")
+    print(f"Configured Ollama Model: {model}")
         
     # 2. Load Gap Report
     if not os.path.exists(args.gap_report):
@@ -129,60 +215,31 @@ def main():
     print(prompt_content)
     print("--------------------------------\n")
     
-    # 4. Generate Recommendations via Gemini
-    print("Calling Gemini API...")
-    models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro']
+    # 4. Generate Recommendations via Ollama
+    print("Calling Ollama API...")
     recommendations = None
     last_err = None
     
-    for model_name in models_to_try:
-        try:
-            print(f"Trying model: {model_name}...")
-            response = call_gemini_api(api_key, prompt_content, SYSTEM_INSTRUCTION, model_name=model_name)
-            
-            # Log token usage metadata
-            usage = response.usage_metadata
-            if usage:
-                print(f"Token Usage - Prompt: {usage.prompt_token_count}, "
-                      f"Response: {usage.candidates_token_count}, "
-                      f"Total: {usage.total_token_count}")
-            
-            # Parse JSON
-            recommendations = json.loads(response.text)
-            print(f"Success with model: {model_name}!")
-            break
-            
-        except json.JSONDecodeError as je:
-            print(f"JSON Parse Error with model {model_name}: Gemini returned invalid JSON syntax. Retrying with stricter instructions. Details: {je}")
-            
-            # Retry with stricter system instructions
-            stricter_instruction = (
-                SYSTEM_INSTRUCTION + 
-                "\nCRITICAL: Return ONLY a valid JSON array of objects. "
-                "Do not include markdown tags (e.g. ```json). Do not add any leading or trailing remarks."
-            )
-            try:
-                response = call_gemini_api(api_key, prompt_content, stricter_instruction, model_name=model_name)
-                
-                usage = response.usage_metadata
-                if usage:
-                    print(f"Token Usage (Retry) - Prompt: {usage.prompt_token_count}, "
-                          f"Response: {usage.candidates_token_count}, "
-                          f"Total: {usage.total_token_count}")
-                          
-                recommendations = json.loads(response.text)
-                print("Successfully parsed JSON on retry.")
-                break
-            except Exception as retry_err:
-                print(f"API Retry failed for {model_name}: {retry_err}")
-                last_err = retry_err
-                
-        except Exception as e:
-            print(f"API Call failed for {model_name}: {e}")
-            last_err = e
+    try:
+        content = call_ollama_api(url, model, prompt_content, SYSTEM_INSTRUCTION)
+        parsed_json = json.loads(content)
+        recommendations = clean_recommendations(parsed_json)
+        print(f"Success with local model {model}!")
+    except json.JSONDecodeError as je:
+        print(f"JSON Parse Error: Ollama returned invalid JSON syntax. Details: {je}")
+        last_err = je
+    except requests.exceptions.RequestException as re:
+        print(f"Ollama API Connection Error: {re}")
+        print("\nEnsure Ollama is running on your Mac host:")
+        print("1. Download & open Ollama (https://ollama.com)")
+        print(f"2. Pull the model: ollama pull {model}")
+        last_err = re
+    except Exception as e:
+        print(f"Unexpected error calling Ollama: {e}")
+        last_err = e
             
     if recommendations is None:
-        print(f"\n[WARNING] All Gemini API attempts failed. Last error: {last_err}")
+        print(f"\n[WARNING] Ollama local LLM generation failed. Last error: {last_err}")
         print("Falling back to offline mock/heuristics to avoid crashing the pipeline...")
         recommendations = [
             {
